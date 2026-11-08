@@ -11,9 +11,13 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.DocumentsContract
 import android.provider.MediaStore
+import android.text.Editable
 import android.text.InputType
+import android.text.TextWatcher
 import android.view.Gravity
 import android.view.View
 import android.webkit.MimeTypeMap
@@ -47,7 +51,6 @@ class MainActivity : Activity() {
     }
 
     private lateinit var input: EditText
-    private lateinit var analyzeBtn: Button
     private lateinit var updBtn: Button
     private lateinit var folderBtn: Button
     private lateinit var list: LinearLayout
@@ -58,6 +61,11 @@ class MainActivity : Activity() {
     private val items = CopyOnWriteArrayList<Item>()
     private var dp = 1f
     private var svcOn = false
+    @Volatile private var ready = false
+    private val handler = Handler(Looper.getMainLooper())
+    private val checkRun = Runnable { autoCheck() }
+    private val checking = ConcurrentHashMap.newKeySet<String>()   // links being checked right now
+    private val failed = ConcurrentHashMap.newKeySet<String>()     // links that cannot be downloaded (not retried)
 
     companion object {
         // Downloads running in this process; survives the activity being recreated.
@@ -66,6 +74,10 @@ class MainActivity : Activity() {
 
     // When the connection drops, stop running downloads at once; the retry loop resumes them on reconnect.
     private val netCb = object : ConnectivityManager.NetworkCallback() {
+        override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
+            if (caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) runOnUiThread { autoCheck() }
+        }
+
         override fun onLost(network: Network) {
             for (a in items) if (a.busy) {
                 try { YoutubeDL.getInstance().destroyProcessById(a.pid) } catch (_: Exception) {}
@@ -98,20 +110,30 @@ class MainActivity : Activity() {
         }
         add(root, TextView(this).apply { text = "VidGrab"; textSize = 28f })
         input = EditText(this).apply {
-            hint = "Paste one or more links (one per line)"
+            hint = "Paste links here (one per line) - they are checked automatically"
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
             minLines = 3
             gravity = Gravity.TOP
         }
         add(root, input)
-        analyzeBtn = btn("Check links") { analyze() }
-        analyzeBtn.isEnabled = false
+        input.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, st: Int, c: Int, a: Int) {}
+            override fun onTextChanged(s: CharSequence?, st: Int, b: Int, c: Int) {}
+            override fun afterTextChanged(e: Editable?) {
+                handler.removeCallbacks(checkRun)
+                handler.postDelayed(checkRun, 1000)
+            }
+        })
         updBtn = btn("Update engine") { update() }
         updBtn.isEnabled = false
-        add(root, analyzeBtn)
         folderBtn = btn("") { pickFolder() }
         add(root, folderBtn)
         updateFolderLabel()
+        add(root, CheckBox(this).apply {
+            text = "Optimize videos after download (smoother playback)"
+            isChecked = prefs.getBoolean("optimize", true)
+            setOnCheckedChangeListener { _, c -> prefs.edit().putBoolean("optimize", c).apply() }
+        })
         val selAll = CheckBox(this).apply {
             text = "Select all"
             setOnCheckedChangeListener { _, c -> items.forEach { it.check.isChecked = c } }
@@ -121,7 +143,7 @@ class MainActivity : Activity() {
         add(root, list)
         add(root, btn("Download") { downloadSelected() })
         add(root, row(btn("Remove completed") { removeCompleted() }, btn("Remove all") { removeAll() }))
-        add(root, btn("Delete files") { deleteFiles() })
+        add(root, row(btn("Delete files") { deleteFiles() }, btn("Optimize files") { optimizeFiles() }))
         add(root, updBtn)
         status = TextView(this).apply { text = "Starting engine..." }
         add(root, status)
@@ -135,10 +157,11 @@ class MainActivity : Activity() {
             try {
                 YoutubeDL.getInstance().init(application)
                 FFmpeg.getInstance().init(application)
+                ready = true
                 runOnUiThread {
-                    analyzeBtn.isEnabled = true
                     updBtn.isEnabled = true
-                    status.text = "Ready (engine ${YoutubeDL.getInstance().versionName(application)})."
+                    status.text = "Ready (engine ${YoutubeDL.getInstance().versionName(application)}). Paste links above."
+                    autoCheck()
                 }
             } catch (e: Exception) {
                 runOnUiThread { status.text = "Could not start the download engine" }
@@ -236,17 +259,20 @@ class MainActivity : Activity() {
     }
 
     // ---------- list of videos ----------
-    private fun analyze() {
-        val urls = Regex("https?://\\S+").findAll(input.text).map { it.value }.distinct().toList()
-        if (urls.isEmpty()) { status.text = "Paste at least one link"; return }
-        if (!online()) { status.text = "No internet connection"; return }
-        analyzeBtn.isEnabled = false
+    /** Checks every new link in the paste box automatically and lists its available resolutions. */
+    private fun autoCheck() {
+        if (!ready) return
+        val inText = Regex("https?://\\S+").findAll(input.text).map { it.value }.distinct().toList()
+        failed.retainAll(inText.toSet())
+        val fresh = inText.filter { u -> items.none { it.url == u } && u !in failed && u !in checking }
+        if (fresh.isEmpty()) return
+        if (!online()) { status.text = "No internet - links will be checked automatically when you are connected"; return }
+        checking.addAll(fresh)
         analyzer.execute {
             val problems = mutableListOf<String>()
             var added = 0
-            for ((n, u) in urls.withIndex()) {
-                if (items.any { it.url == u }) continue
-                runOnUiThread { status.text = "Checking link ${n + 1} of ${urls.size}..." }
+            for ((n, u) in fresh.withIndex()) {
+                runOnUiThread { status.text = "Checking link ${n + 1} of ${fresh.size}..." }
                 try {
                     val req = YoutubeDLRequest(u)
                     req.addOption("--dump-single-json")
@@ -272,18 +298,33 @@ class MainActivity : Activity() {
                     labels.add("Best available"); choices.add(0)
                     labels.add("Audio only (MP3)"); choices.add(-1)
                     val item = Item(u, j.optString("title", u), labels, choices)
-                    runOnUiThread { addRow(item); persist() }
+                    runOnUiThread {
+                        if (items.none { it.url == u }) {
+                            addRow(item)
+                            item.check.isChecked = true
+                            persist()
+                        }
+                        checking.remove(u)
+                    }
                     added++
                 } catch (e: Exception) {
-                    problems.add("Link ${n + 1}: " + why(e).first)
+                    val (msg, net) = why(e)
+                    if (!net) failed.add(u)
+                    checking.remove(u)
+                    problems.add("Link ${n + 1}: $msg")
                 }
             }
             runOnUiThread {
-                analyzeBtn.isEnabled = true
-                val head = if (added > 0) "Tick the videos, pick a resolution, then tap Download." else ""
+                val head = if (added > 0) "Pick a resolution for each video, then tap Download." else ""
                 status.text = (listOf(head) + problems).filter { it.isNotEmpty() }.joinToString("\n")
             }
         }
+    }
+
+    /** Removes a link from the paste box once its download has started. */
+    private fun removeFromInput(u: String) {
+        val t = input.text.toString()
+        if (u in t) input.setText(t.lines().filter { !it.contains(u) }.joinToString("\n"))
     }
 
     private fun addRow(a: Item) {
@@ -401,6 +442,64 @@ class MainActivity : Activity() {
         }
     }
 
+    // ---------- optimize with the bundled ffmpeg ----------
+    private fun ffmpegBin() = File(applicationInfo.nativeLibraryDir, "libffmpeg.so")
+
+    /** Rebuilds the container (no re-encoding): fixes timestamps, drops broken packets, puts the index first. */
+    private fun optimize(f: File): Boolean {
+        val ext = f.extension.lowercase()
+        if (ext !in listOf("mp4", "m4v", "mov", "mkv", "webm")) return false
+        val out = File(f.parentFile, f.nameWithoutExtension + ".opt." + ext)
+        try {
+            val cmd = mutableListOf(ffmpegBin().absolutePath, "-nostdin", "-y",
+                "-fflags", "+genpts+discardcorrupt", "-i", f.absolutePath,
+                "-map", "0:v?", "-map", "0:a?", "-c", "copy", "-avoid_negative_ts", "make_zero")
+            if (ext != "mkv" && ext != "webm") { cmd.add("-movflags"); cmd.add("+faststart") }
+            cmd.add(out.absolutePath)
+            val pb = ProcessBuilder(cmd)
+            pb.environment()["LD_LIBRARY_PATH"] =
+                File(noBackupFilesDir, "youtubedl-android/packages/ffmpeg/usr/lib").absolutePath
+            pb.redirectErrorStream(true)
+            val p = pb.start()
+            p.inputStream.readBytes()
+            if (p.waitFor() == 0 && out.length() > f.length() / 2) {
+                f.delete()
+                return out.renameTo(f)
+            }
+        } catch (_: Exception) {}
+        out.delete()
+        return false
+    }
+
+    private fun optimizeFiles() {
+        val sel = items.filter { it.check.isChecked && it.files.isNotEmpty() }
+        if (sel.isEmpty()) { status.text = "Tick videos that have downloaded files first"; return }
+        status.text = "Optimizing ${sel.size} item(s)..."
+        analyzer.execute {
+            var fixed = 0
+            for (a in sel) {
+                ui(a, "Optimizing...")
+                var ok = false
+                for (s in a.files) {
+                    val u = Uri.parse(s)
+                    val ext = MimeTypeMap.getSingleton().getExtensionFromMimeType(contentResolver.getType(u)) ?: "mp4"
+                    val tmp = File(cacheDir, "opt/${System.nanoTime()}.$ext").apply { parentFile?.mkdirs() }
+                    try {
+                        contentResolver.openInputStream(u)!!.use { i -> tmp.outputStream().use { i.copyTo(it) } }
+                        if (optimize(tmp)) {
+                            contentResolver.openOutputStream(u, "wt")!!.use { o -> tmp.inputStream().use { it.copyTo(o) } }
+                            ok = true
+                        }
+                    } catch (_: Exception) {}
+                    tmp.delete()
+                }
+                if (ok) fixed++
+                ui(a, if (ok) "Optimized" else "Could not optimize (file left unchanged)")
+            }
+            runOnUiThread { status.text = "Optimized $fixed of ${sel.size} item(s)." }
+        }
+    }
+
     // ---------- downloading ----------
     private fun downloadSelected() {
         if (items.isEmpty()) { status.text = "Tap \"Check links\" first"; return }
@@ -414,6 +513,7 @@ class MainActivity : Activity() {
         val choice = choiceOf(a)
         val dir = dirFor(a, choice).apply { mkdirs() }
         if (!running.add(dir.name)) { a.state.text = "Already running in the background"; return }
+        removeFromInput(a.url)
         a.busy = true
         a.cancelled = false
         a.paused = false
@@ -543,6 +643,10 @@ class MainActivity : Activity() {
                     val files = dir.listFiles().orEmpty()
                         .filter { !it.name.endsWith(".part") && !it.name.endsWith(".ytdl") && !it.name.endsWith(".temp") }
                     if (files.isEmpty()) throw Exception("incomplete download")
+                    if (prefs.getBoolean("optimize", true)) {
+                        ui(a, "Optimizing video...")
+                        files.forEach { optimize(it) }
+                    }
                     val saved = files.map { save(it) }
                     dir.deleteRecursively()
                     a.files.addAll(saved)
