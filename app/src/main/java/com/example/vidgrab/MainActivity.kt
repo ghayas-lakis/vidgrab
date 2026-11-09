@@ -10,7 +10,14 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.Uri
+import android.content.ClipboardManager
+import android.content.res.ColorStateList
+import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.StateListDrawable
 import android.os.Bundle
+import android.provider.OpenableColumns
 import android.os.Handler
 import android.os.Looper
 import android.provider.DocumentsContract
@@ -31,6 +38,19 @@ import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
+
+private val C_TOP = Color.parseColor("#071A5C")
+private val C_BOTTOM = Color.parseColor("#0E45C8")
+private val C_PRIMARY = Color.parseColor("#1E6BFF")
+private val C_SOFT = Color.parseColor("#E4ECFF")
+private val C_DANGER = Color.parseColor("#E5484D")
+private val C_TEXT = Color.parseColor("#14213D")
+private val C_MUTED = Color.parseColor("#6B7A99")
+private val C_FIELD = Color.parseColor("#F0F4FF")
+private val C_SUB = Color.parseColor("#BFD2FF")
+private const val PRIMARY = 0
+private const val SOFT = 1
+private const val DANGER = 2
 
 class MainActivity : Activity() {
     // choices: height in pixels, 0 = best available, -1 = audio only (MP3)
@@ -65,6 +85,7 @@ class MainActivity : Activity() {
     private val handler = Handler(Looper.getMainLooper())
     private val checkRun = Runnable { autoCheck() }
     private val checking = ConcurrentHashMap.newKeySet<String>()   // links being checked right now
+    private var prevLinks = setOf<String>()
     private val failed = ConcurrentHashMap.newKeySet<String>()     // links that cannot be downloaded (not retried)
 
     companion object {
@@ -87,67 +108,158 @@ class MainActivity : Activity() {
 
     private fun px(v: Int) = (v * dp).toInt()
 
-    private fun btn(text: String, onClick: () -> Unit) = Button(this).apply {
-        this.text = text
-        setOnClickListener { onClick() }
+    private fun bg(color: Int, r: Int) = GradientDrawable().apply {
+        setColor(color)
+        cornerRadius = px(r).toFloat()
+    }
+
+    private fun darker(c: Int): Int {
+        val hsv = FloatArray(3)
+        Color.colorToHSV(c, hsv)
+        hsv[2] *= 0.85f
+        return Color.HSVToColor(hsv)
+    }
+
+    private fun btn(text: String, kind: Int = SOFT, onClick: () -> Unit): Button {
+        val fill = when (kind) { PRIMARY -> C_PRIMARY; DANGER -> C_DANGER; else -> C_SOFT }
+        val fg = if (kind == SOFT) C_PRIMARY else Color.WHITE
+        val b = Button(this)
+        b.text = text
+        b.isAllCaps = false
+        b.textSize = 15f
+        b.stateListAnimator = null
+        b.minHeight = px(44)
+        b.minimumHeight = px(44)
+        b.background = StateListDrawable().apply {
+            addState(intArrayOf(-android.R.attr.state_enabled), bg(Color.parseColor("#CBD3E6"), 12))
+            addState(intArrayOf(android.R.attr.state_pressed), bg(darker(fill), 12))
+            addState(intArrayOf(), bg(fill, 12))
+        }
+        b.setTextColor(ColorStateList(
+            arrayOf(intArrayOf(-android.R.attr.state_enabled), intArrayOf()),
+            intArrayOf(Color.parseColor("#7C879E"), fg)))
+        b.setOnClickListener { onClick() }
+        return b
     }
 
     private fun row(vararg views: View) = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
-        for (v in views) addView(v, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        for (v in views) addView(v, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            .apply { setMargins(px(3), 0, px(3), 0) })
     }
 
-    private fun add(parent: LinearLayout, v: View) = parent.addView(v, LinearLayout.LayoutParams(
-        LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+    private fun add(parent: LinearLayout, v: View, m: Int = 4) = parent.addView(v,
+        LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            .apply { setMargins(0, px(m), 0, px(m)) })
+
+    private fun card() = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        background = bg(Color.WHITE, 18)
+        setPadding(px(14), px(10), px(14), px(10))
+    }
 
     override fun onCreate(s: Bundle?) {
         super.onCreate(s)
         dp = resources.displayMetrics.density
         prefs = getSharedPreferences("vidgrab", MODE_PRIVATE)
+        window.statusBarColor = C_TOP
+        window.navigationBarColor = C_BOTTOM
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(px(16), px(40), px(16), px(24))
+            setPadding(px(14), px(18), px(14), px(24))
         }
-        add(root, TextView(this).apply { text = "VidGrab"; textSize = 28f })
+
+        // header with the app logo
+        val head = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        head.addView(ImageView(this).apply { setImageResource(R.drawable.app_logo) },
+            LinearLayout.LayoutParams(px(52), px(52)))
+        val titles = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(px(12), 0, 0, 0)
+        }
+        titles.addView(TextView(this).apply {
+            text = "VidGrab"; textSize = 26f; setTextColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD
+        })
+        titles.addView(TextView(this).apply { text = "Fast video downloader"; textSize = 13f; setTextColor(C_SUB) })
+        head.addView(titles)
+        add(root, head)
+
+        // status line (right under the header so it is always visible)
+        status = TextView(this).apply {
+            text = "Starting engine..."
+            textSize = 14f
+            setTextColor(Color.WHITE)
+            setPadding(px(4), px(10), px(4), px(6))
+        }
+        add(root, status)
+
+        // links card
+        val links = card()
         input = EditText(this).apply {
             hint = "Paste links here (one per line) - they are checked automatically"
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
             minLines = 3
             gravity = Gravity.TOP
+            background = bg(C_FIELD, 12)
+            setPadding(px(12), px(10), px(12), px(10))
+            setTextColor(C_TEXT)
+            setHintTextColor(C_MUTED)
         }
-        add(root, input)
+        add(links, input)
         input.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, st: Int, c: Int, a: Int) {}
             override fun onTextChanged(s: CharSequence?, st: Int, b: Int, c: Int) {}
             override fun afterTextChanged(e: Editable?) {
                 handler.removeCallbacks(checkRun)
-                handler.postDelayed(checkRun, 1000)
+                handler.postDelayed(checkRun, 600)
             }
         })
-        updBtn = btn("Update engine") { update() }
-        updBtn.isEnabled = false
+        add(links, btn("Paste from clipboard", PRIMARY) { pasteClipboard() })
+        add(root, links, 6)
+
+        // settings card
+        val settings = card()
         folderBtn = btn("") { pickFolder() }
-        add(root, folderBtn)
+        add(settings, folderBtn)
         updateFolderLabel()
-        add(root, CheckBox(this).apply {
-            text = "Optimize videos after download (smoother playback)"
+        add(settings, CheckBox(this).apply {
+            text = "Optimize automatically after each download (untick to optimize later)"
+            setTextColor(C_TEXT)
+            buttonTintList = ColorStateList.valueOf(C_PRIMARY)
             isChecked = prefs.getBoolean("optimize", true)
             setOnCheckedChangeListener { _, c -> prefs.edit().putBoolean("optimize", c).apply() }
         })
-        val selAll = CheckBox(this).apply {
+        add(root, settings, 6)
+
+        // video list
+        add(root, CheckBox(this).apply {
             text = "Select all"
+            setTextColor(Color.WHITE)
+            buttonTintList = ColorStateList.valueOf(Color.WHITE)
             setOnCheckedChangeListener { _, c -> items.forEach { it.check.isChecked = c } }
-        }
-        add(root, selAll)
+        })
         list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        add(root, list)
-        add(root, btn("Download") { downloadSelected() })
-        add(root, row(btn("Remove completed") { removeCompleted() }, btn("Remove all") { removeAll() }))
-        add(root, row(btn("Delete files") { deleteFiles() }, btn("Optimize files") { optimizeFiles() }))
-        add(root, updBtn)
-        status = TextView(this).apply { text = "Starting engine..." }
-        add(root, status)
-        setContentView(ScrollView(this).apply { addView(root) })
+        add(root, list, 0)
+
+        // actions card
+        val actions = card()
+        add(actions, btn("Download", PRIMARY) { downloadSelected() })
+        add(actions, row(btn("Remove completed") { removeCompleted() }, btn("Remove all", DANGER) { removeAll() }))
+        add(actions, row(btn("Delete files", DANGER) { deleteFiles() }, btn("Optimize files") { optimizeFiles() }))
+        add(actions, btn("Optimize a video from my phone") { pickVideos() })
+        updBtn = btn("Update engine") { update() }
+        updBtn.isEnabled = false
+        add(actions, updBtn)
+        add(root, actions, 6)
+
+        setContentView(ScrollView(this).apply {
+            isFillViewport = true
+            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(C_TOP, C_BOTTOM))
+            addView(root)
+        })
         restore()
         handleIntent(intent)
         if (android.os.Build.VERSION.SDK_INT >= 33)
@@ -249,6 +361,13 @@ class MainActivity : Activity() {
 
     override fun onActivityResult(req: Int, res: Int, data: Intent?) {
         super.onActivityResult(req, res, data)
+        if (req == 3 && res == RESULT_OK && data != null) {
+            val uris = mutableListOf<Uri>()
+            data.clipData?.let { c -> for (k in 0 until c.itemCount) uris.add(c.getItemAt(k).uri) }
+            if (uris.isEmpty()) data.data?.let { uris.add(it) }
+            if (uris.isNotEmpty()) optimizePicked(uris)
+            return
+        }
         if (req == 1 && res == RESULT_OK) {
             val u = data?.data ?: return
             contentResolver.takePersistableUriPermission(u,
@@ -263,10 +382,16 @@ class MainActivity : Activity() {
     private fun autoCheck() {
         if (!ready) return
         val inText = Regex("https?://\\S+").findAll(input.text).map { it.value }.distinct().toList()
+        val newly = inText.filter { it !in prevLinks }
+        prevLinks = inText.toSet()
+        failed.removeAll(newly.toSet())          // a link you paste again is tried again
         failed.retainAll(inText.toSet())
         val fresh = inText.filter { u -> items.none { it.url == u } && u !in failed && u !in checking }
-        if (fresh.isEmpty()) return
-        if (!online()) { status.text = "No internet - links will be checked automatically when you are connected"; return }
+        if (fresh.isEmpty()) {
+            if (newly.any { n -> items.any { it.url == n } }) status.text = "That link is already in your list below."
+            return
+        }
+        status.text = "Checking ${fresh.size} link(s)..."
         checking.addAll(fresh)
         analyzer.execute {
             val problems = mutableListOf<String>()
@@ -328,22 +453,29 @@ class MainActivity : Activity() {
     }
 
     private fun addRow(a: Item) {
-        a.check = CheckBox(this)
+        a.check = CheckBox(this).apply { buttonTintList = ColorStateList.valueOf(C_PRIMARY) }
         a.spinner = Spinner(this)
         a.spinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, a.labels)
-        a.bar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100 }
-        a.state = TextView(this).apply { text = "Waiting" }
+        a.bar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 100
+            progressTintList = ColorStateList.valueOf(C_PRIMARY)
+            progressBackgroundTintList = ColorStateList.valueOf(C_SOFT)
+        }
+        a.state = TextView(this).apply { text = "Waiting"; textSize = 13f; setTextColor(C_MUTED) }
+        a.toggle = btn("Start", PRIMARY) { if (a.busy && !a.paused && !a.cancelled) pauseItem(a) else startItem(a) }
+        a.stopBtn = btn("Stop", DANGER) { stopItem(a) }
+        for (x in listOf(a.toggle, a.stopBtn)) { x.minHeight = px(38); x.minimumHeight = px(38) }
         val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        add(content, TextView(this).apply { text = a.title; maxLines = 2; textSize = 16f })
+        add(content, TextView(this).apply {
+            text = a.title; maxLines = 2; textSize = 16f
+            typeface = Typeface.DEFAULT_BOLD; setTextColor(C_TEXT)
+        })
         add(content, a.spinner)
         add(content, a.bar)
         add(content, a.state)
-        a.toggle = btn("Start") { if (a.busy && !a.paused && !a.cancelled) pauseItem(a) else startItem(a) }
-        a.stopBtn = btn("Stop") { stopItem(a) }
         add(content, row(a.toggle, a.stopBtn))
-        a.box = LinearLayout(this).apply {
+        a.box = card().apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(0, px(12), 0, px(4))
             addView(a.check, LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
             addView(content, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
@@ -352,7 +484,9 @@ class MainActivity : Activity() {
             a.bar.progress = 100
             a.state.text = "Done - saved"
         }
-        list.addView(a.box)
+        list.addView(a.box, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            .apply { setMargins(0, px(6), 0, px(6)) })
         items.add(a)
         refreshButtons(a)
     }
@@ -497,6 +631,60 @@ class MainActivity : Activity() {
                 ui(a, if (ok) "Optimized" else "Could not optimize (file left unchanged)")
             }
             runOnUiThread { status.text = "Optimized $fixed of ${sel.size} item(s)." }
+        }
+    }
+
+    // ---------- clipboard + optimize a video from the phone ----------
+    private fun pasteClipboard() {
+        val cm = getSystemService(ClipboardManager::class.java)
+        val clip = cm.primaryClip
+        val t = if (clip != null && clip.itemCount > 0) clip.getItemAt(0).coerceToText(this).toString() else ""
+        val urls = Regex("https?://\\S+").findAll(t).map { it.value }.toList()
+        if (urls.isEmpty()) { status.text = "No link found in the clipboard"; return }
+        input.append(urls.joinToString("\n") + "\n")
+    }
+
+    private fun pickVideos() {
+        val i = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "video/*"
+            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+        }
+        startActivityForResult(i, 3)
+    }
+
+    private fun displayName(u: Uri): String? =
+        contentResolver.query(u, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+            if (c.moveToFirst()) c.getString(0) else null
+        }
+
+    /** Optimizes videos chosen from the phone; each result is saved as a new "(optimized)" copy. */
+    private fun optimizePicked(uris: List<Uri>) {
+        status.text = "Optimizing ${uris.size} video(s)..."
+        analyzer.execute {
+            var ok = 0
+            for ((n, u) in uris.withIndex()) {
+                runOnUiThread { status.text = "Optimizing video ${n + 1} of ${uris.size}..." }
+                val name = (displayName(u) ?: "video.mp4").replace("/", "_")
+                val ext = name.substringAfterLast('.', "mp4")
+                val base = name.substringBeforeLast('.', name)
+                val dir = File(cacheDir, "opt/${System.nanoTime()}").apply { mkdirs() }
+                val tmp = File(dir, "in.$ext")
+                try {
+                    contentResolver.openInputStream(u)!!.use { i -> tmp.outputStream().use { i.copyTo(it) } }
+                    if (optimize(tmp)) {
+                        val out = File(dir, "$base (optimized).$ext")
+                        tmp.renameTo(out)
+                        save(out)
+                        ok++
+                    }
+                } catch (_: Exception) {}
+                dir.deleteRecursively()
+            }
+            runOnUiThread {
+                status.text = if (ok > 0) "Optimized $ok of ${uris.size} video(s). Saved as \"... (optimized)\" in your download folder; the originals are untouched."
+                    else "Could not optimize. Supported types: MP4, M4V, MOV, MKV, WEBM."
+            }
         }
     }
 
