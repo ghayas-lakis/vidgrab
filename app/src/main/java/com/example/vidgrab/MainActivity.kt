@@ -890,6 +890,7 @@ class MainActivity : Activity() {
     }
 
     private fun confirm(msg: String, ok: () -> Unit) {
+        if (autoConfirm) { ok(); return }
         AlertDialog.Builder(this).setMessage(msg)
             .setPositiveButton("Yes") { _, _ -> ok() }
             .setNegativeButton("No", null).show()
@@ -1495,6 +1496,25 @@ class MainActivity : Activity() {
         contentResolver.openOutputStream(uri)!!.use { out -> f.inputStream().use { it.copyTo(out) } }
         return uri.toString()
     }
+
+    // ---------- test hooks ----------
+    // UI TEST CONTRACT: the end-to-end tests in app/src/androidTest drive the app ONLY through these
+    // functions (plus the public fields of Item: url, title, labels, check, spinner, state, done, files, err).
+    // A UI redesign may change any view, but must keep these names and what they do.
+    // Must be called on the main thread (tests use ActivityScenario.onActivity).
+    @Volatile internal var autoConfirm = false        // confirm() answers "Yes" without showing a dialog
+    internal fun testReady() = ready
+    internal fun testAddLinks(text: String) { input.append(text + "\n") }
+    internal fun testItems(): List<Item> = items.toList()
+    internal fun testStatus() = status.text.toString()
+    internal fun testCheckErr() = checkErr
+    internal fun testState(a: Item) = a.state.text.toString()
+    internal fun testSelect(a: Item, label: String) { a.spinner.setSelection(a.labels.indexOf(label)) }
+    internal fun testDownloadTicked() = downloadSelected()
+    internal fun testOptimizeTicked() = optimizeFiles()
+    internal fun testDeleteTicked() = deleteTicked()
+    internal fun testRemoveUnfinished() = removeUnfinished()
+    internal fun testRemoveAll() = removeAll()
 
     // ---------- engine update ----------
     private fun update() {
