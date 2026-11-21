@@ -52,13 +52,13 @@ Android Studio can also open the project directly.
 ## How to use
 
 1. Paste links into the box, tap **Paste from clipboard**, or use **Share → VidGrab** from a browser or app.
-2. Wait for "Pick a resolution for each video", then choose a resolution in each card.
-3. Tick the videos you want and tap **Download**. Each card also has its own **Start / Pause** and **Stop** buttons.
-4. Finished files go to the folder shown on the **Save to:** button.
+2. Each link gets a card with its thumbnail, title, site, length and uploader. Choose a **Quality** in each card.
+3. Tick the videos you want and tap **Download (N)** in the bottom bar. Each card also has its own **Start / Pause** and **Stop** buttons. The status line is blue while working, amber while waiting, red on errors and green when done.
+4. Finished files go to the folder shown on the **Save to:** button. Finished cards switch to **Open** and **Share**.
 
-Other actions:
+Everything else is in the **More** menu in the bottom bar:
 
-| Button | What it does |
+| Menu item | What it does |
 |---|---|
 | Remove completed | Clears finished items from the list. Files are kept. |
 | Remove unfinished | Removes the *ticked* items that haven't finished, stopping them if they are running, and discards their partial files. |
@@ -66,7 +66,7 @@ Other actions:
 | Delete files | Deletes the saved files of the ticked items. |
 | Optimize files | Remuxes the saved files of the ticked items in place. |
 | Optimize a video from my phone | Picks videos from your storage and saves optimized copies. |
-| Update engine | Updates yt-dlp to the newest (nightly) build. |
+| Update engine | Updates yt-dlp to the newest (nightly) build. Not available while downloads are running. |
 
 If a site stops working, try **Update engine** first. Sites change often, and yt-dlp is updated to keep up.
 
