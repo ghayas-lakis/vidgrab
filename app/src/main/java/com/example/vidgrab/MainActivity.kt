@@ -56,6 +56,8 @@ private const val SOFT = 1
 private const val DANGER = 2
 // Marks our own progress lines (see --progress-template in buildRequest).
 private const val PROG = "VGP|"
+// Start of optimize()'s answer for audio and other non-video files (expected, not an error).
+private const val NOT_VIDEO = "Not a video file"
 
 class MainActivity : Activity() {
     // choices: height in pixels, 0 = best available, -1 = audio only (MP3)
@@ -300,7 +302,7 @@ class MainActivity : Activity() {
             setTextColor(Color.WHITE)
             background = bg(C_GLASS, 12)
             setPadding(px(12), px(9), px(12), px(9))
-            setOnClickListener { if (checkErr.isNotEmpty()) showDetails("Link check", checkErr) }
+            setOnClickListener { if (checkErr.isNotEmpty()) showDetails("Details", checkErr) }
         }
         add(root, status, 8)
 
@@ -1013,30 +1015,56 @@ class MainActivity : Activity() {
     // ---------- optimize with the bundled ffmpeg ----------
     private fun ffmpegBin() = File(applicationInfo.nativeLibraryDir, "libffmpeg.so")
 
-    /** Rebuilds the container (no re-encoding): fixes timestamps, drops broken packets, puts the index first. */
-    private fun optimize(f: File): Boolean {
+    /**
+     * The bundled ffmpeg needs libraries from BOTH the library's python and ffmpeg folders (since
+     * youtubedl-android 0.18 it links libc++_shared, libcrypto, libexpat, ... from the python one).
+     * This is the same search path the library gives ffmpeg when yt-dlp merges a download.
+     */
+    private fun ffmpegEnv(pb: ProcessBuilder) {
+        val pk = File(noBackupFilesDir, "youtubedl-android/packages")
+        pb.environment()["LD_LIBRARY_PATH"] =
+            listOf("python", "ffmpeg", "aria2c").joinToString(":") { File(pk, "$it/usr/lib").absolutePath }
+        pb.environment()["TMPDIR"] = cacheDir.absolutePath
+    }
+
+    /**
+     * Rebuilds the container (no re-encoding): fixes timestamps, drops broken packets, puts the index first.
+     * Returns null when the file was optimized, otherwise the reason (with ffmpeg's error output).
+     */
+    private fun optimize(f: File): String? {
         val ext = f.extension.lowercase()
-        if (ext !in listOf("mp4", "m4v", "mov", "mkv", "webm")) return false
-        val out = File(f.parentFile, f.nameWithoutExtension + ".opt." + ext)
+        if (ext !in listOf("mp4", "m4v", "mov", "mkv", "webm"))
+            return "$NOT_VIDEO (.$ext) - only MP4, M4V, MOV, MKV and WEBM can be optimized"
+        if (!ffmpegBin().exists()) return "The video tools (ffmpeg) are missing from this build"
+        val dir = f.parentFile ?: return "Bad file location"
+        if (dir.usableSpace < f.length() + 20_000_000L) return "Not enough free space to optimize"
+        val out = File(dir, f.nameWithoutExtension + ".opt." + ext)
         try {
-            val cmd = mutableListOf(ffmpegBin().absolutePath, "-nostdin", "-y",
+            val cmd = mutableListOf(ffmpegBin().absolutePath, "-nostdin", "-y", "-hide_banner", "-loglevel", "error",
                 "-fflags", "+genpts+discardcorrupt", "-i", f.absolutePath,
                 "-map", "0:v?", "-map", "0:a?", "-c", "copy", "-avoid_negative_ts", "make_zero")
             if (ext != "mkv" && ext != "webm") { cmd.add("-movflags"); cmd.add("+faststart") }
             cmd.add(out.absolutePath)
             val pb = ProcessBuilder(cmd)
-            pb.environment()["LD_LIBRARY_PATH"] =
-                File(noBackupFilesDir, "youtubedl-android/packages/ffmpeg/usr/lib").absolutePath
+            ffmpegEnv(pb)
             pb.redirectErrorStream(true)
             val p = pb.start()
-            p.inputStream.readBytes()
-            if (p.waitFor() == 0 && out.length() > f.length() / 2) {
+            val log = p.inputStream.bufferedReader().readText().trim()
+            val code = p.waitFor()
+            if (code == 0 && out.length() > f.length() / 2) {
                 f.delete()
-                return out.renameTo(f)
+                return if (out.renameTo(f)) null else "Could not replace the file with the optimized one"
             }
-        } catch (_: Exception) {}
-        out.delete()
-        return false
+            out.delete()
+            return when {
+                code == 0 -> "ffmpeg's result looked wrong, so the file was left unchanged"
+                log.isEmpty() -> "ffmpeg failed (exit code $code)"
+                else -> "ffmpeg failed (exit code $code):\n" + log.takeLast(1500)
+            }
+        } catch (e: Exception) {
+            out.delete()
+            return "Could not run ffmpeg: " + (e.message ?: e.javaClass.simpleName)
+        }
     }
 
     private fun optimizeFiles() {
@@ -1048,23 +1076,35 @@ class MainActivity : Activity() {
             for (a in sel) {
                 ui(a, "Optimizing...", C_PRIMARY)
                 var ok = false
+                val errs = mutableListOf<String>()
                 for (s in a.files) {
                     val u = Uri.parse(s)
-                    val ext = MimeTypeMap.getSingleton().getExtensionFromMimeType(contentResolver.getType(u)) ?: "mp4"
+                    val ext = (try {
+                        MimeTypeMap.getSingleton().getExtensionFromMimeType(contentResolver.getType(u))
+                    } catch (_: Exception) { null }) ?: "mp4"
                     val tmp = File(cacheDir, "opt/${System.nanoTime()}.$ext").apply { parentFile?.mkdirs() }
                     try {
                         contentResolver.openInputStream(u)!!.use { i -> tmp.outputStream().use { i.copyTo(it) } }
-                        if (optimize(tmp)) {
+                        val r = optimize(tmp)
+                        if (r == null) {
                             contentResolver.openOutputStream(u, "wt")!!.use { o -> tmp.inputStream().use { it.copyTo(o) } }
                             ok = true
-                        }
-                    } catch (_: Exception) {}
+                        } else errs.add(r)
+                    } catch (e: Exception) {
+                        errs.add(rawError(e))
+                    }
                     tmp.delete()
                 }
                 if (ok) fixed++
-                ui(a, if (ok) "Optimized" else "Could not optimize (file left unchanged)", if (ok) C_OK else C_DANGER)
+                a.err = errs.joinToString("\n\n")
+                ui(a, when {
+                    ok && errs.isEmpty() -> "Optimized"
+                    ok -> "Partly optimized - tap here for details"
+                    errs.all { it.startsWith(NOT_VIDEO) } -> "Audio files don't need optimizing"
+                    else -> "Could not optimize (file left unchanged) - tap here for details"
+                }, if (ok) C_OK else C_DANGER)
             }
-            runOnUiThread { status.text = "Optimized $fixed of ${sel.size} item(s)." }
+            runOnUiThread { tell("Optimized $fixed of ${sel.size} item(s).") }
         }
     }
 
@@ -1097,6 +1137,7 @@ class MainActivity : Activity() {
         status.text = "Optimizing ${uris.size} video(s)..."
         analyzer.execute {
             var ok = 0
+            val errs = StringBuilder()
             for ((n, u) in uris.withIndex()) {
                 runOnUiThread { status.text = "Optimizing video ${n + 1} of ${uris.size}..." }
                 val name = (displayName(u) ?: "video.mp4").replace("/", "_")
@@ -1106,18 +1147,26 @@ class MainActivity : Activity() {
                 val tmp = File(dir, "in.$ext")
                 try {
                     contentResolver.openInputStream(u)!!.use { i -> tmp.outputStream().use { i.copyTo(it) } }
-                    if (optimize(tmp)) {
+                    val r = optimize(tmp)
+                    if (r == null) {
                         val out = File(dir, "$base (optimized).$ext")
                         tmp.renameTo(out)
                         save(out)
                         ok++
-                    }
-                } catch (_: Exception) {}
+                    } else errs.append(name).append(":\n").append(r).append("\n\n")
+                } catch (e: Exception) {
+                    errs.append(name).append(":\n").append(rawError(e)).append("\n\n")
+                }
                 dir.deleteRecursively()
             }
+            if (errs.isNotEmpty()) checkErr = errs.toString().trim()
             runOnUiThread {
-                status.text = if (ok > 0) "Optimized $ok of ${uris.size} video(s). Saved as \"... (optimized)\" in your download folder; the originals are untouched."
-                    else "Could not optimize. Supported types: MP4, M4V, MOV, MKV, WEBM."
+                val saved = "Saved as \"... (optimized)\" in your download folder; the originals are untouched."
+                tell(when {
+                    ok == uris.size -> "Optimized ${uris.size} video(s). $saved"
+                    ok > 0 -> "Optimized $ok of ${uris.size} video(s). $saved Tap here for details on the others."
+                    else -> "Could not optimize. Tap here for details."
+                })
             }
         }
     }
@@ -1372,18 +1421,23 @@ class MainActivity : Activity() {
                     val files = dir.listFiles().orEmpty()
                         .filter { !it.name.endsWith(".part") && !it.name.endsWith(".ytdl") && !it.name.endsWith(".temp") }
                     if (files.isEmpty()) throw Exception("incomplete download")
+                    // Optimizing is a bonus: if it fails the download is still saved, and the card says why.
+                    var optErr = ""
                     if (prefs.getBoolean("optimize", true)) {
                         ui(a, "Optimizing video...", C_PRIMARY)
-                        files.forEach { optimize(it) }
+                        optErr = files.mapNotNull { optimize(it) }.filter { !it.startsWith(NOT_VIDEO) }
+                            .joinToString("\n\n")
                     }
                     val saved = files.map { save(it) }
                     dir.deleteRecursively()
                     a.files.addAll(saved)
                     a.pct = 100
                     a.done = true
+                    a.err = if (optErr.isEmpty()) "" else "Saved, but optimizing failed:\n\n$optErr"
                     runOnUiThread {
                         a.bar.progress = 100
-                        setState(a, "Done - saved", C_OK)
+                        if (optErr.isEmpty()) setState(a, "Done - saved", C_OK)
+                        else setState(a, "Done - saved (not optimized - tap here for details)", C_WARN)
                         persist()
                         updateCounts()
                     }
