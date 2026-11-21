@@ -24,7 +24,7 @@ VidGrab bundles [yt-dlp](https://github.com/yt-dlp/yt-dlp) and FFmpeg through th
 | | |
 |---|---|
 | Android | 10 (API 29) or newer |
-| CPU | ARM: `arm64-v8a` or `armeabi-v7a` (x86 emulators are not supported by this build) |
+| CPU | ARM: `arm64-v8a` or `armeabi-v7a`. For an x86_64 emulator, build with `-Pvidgrab.abis=x86_64`. |
 | Storage | Free space of roughly **2× the video size**. Downloads are assembled in app storage and then copied to your folder, and optimizing needs one more temporary copy. |
 
 ## Installing
@@ -49,6 +49,19 @@ gradle assembleDebug
 ```
 
 Android Studio can also open the project directly.
+
+## Automated tests
+
+Every push runs two GitHub Actions jobs:
+
+- **build** compiles the APK. On failure, Kotlin errors show up as annotations on the run's page.
+- **e2e** starts an Android 13 emulator, installs the app and uses it for real, with the bundled yt-dlp, Python and FFmpeg and a real network (`app/src/androidTest`, run by `ci/e2e.sh`):
+  - `EndToEndTest` (must pass): pastes a link to [testdata/vidgrab-test.mp4](testdata/vidgrab-test.mp4), downloads it, checks the saved file was optimized (its MP4 index moved to the front), runs *Optimize ticked files*, then *Delete ticked videos* and checks the file is gone. It also downloads *Audio only (MP3)* and checks the result is an MP3, and checks *Remove ticked unfinished*.
+  - `YouTubeTest` (warning only): downloads a short YouTube video. YouTube often blocks CI's data-center IPs, so a failure there is reported as a warning rather than failing the run.
+
+Test results, the HTML report and logcat are in the run's **e2e-results** artifact. The tests drive the app through a small set of hooks in `MainActivity` (see "UI TEST CONTRACT" there); keep them working when changing the UI.
+
+To run the tests locally on a connected device or emulator: `gradle connectedDebugAndroidTest` (add `-Pvidgrab.abis=x86_64` for an x86_64 emulator).
 
 ## How to use
 
