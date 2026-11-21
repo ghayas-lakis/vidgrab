@@ -83,7 +83,7 @@ Optimize jobs run on the same single-thread `analyzer` as link checks (lines 612
 
 ### Repository and build
 
-- `VidGrab5.zip` is an exact copy of the source tree, apart from line endings. It adds 470 KB to the repo and goes out of date with every commit. **Delete it.**
+- `VidGrab5.zip` is an exact copy of the source tree, apart from line endings. It adds 470 KB to the repo and goes out of date with every commit. **Delete it.** (Done.)
 - There's no `.gitignore`, so `build/`, `.gradle/`, `local.properties` and `*.iml` can easily get committed.
 - There's no Gradle wrapper, so builds depend on whichever Gradle is installed. Add `gradlew` with a pinned 8.7.
 - There's no release build type, no signing config, `versionCode = 1` is never bumped, and the package name is `com.example.*` (Google Play rejects that).
@@ -99,7 +99,7 @@ Optimize jobs run on the same single-thread `analyzer` as link checks (lines 612
 Phases are ordered by risk reduction per unit of effort. Each phase can ship on its own.
 
 ### Phase 0: repo hygiene (about 1 hour)
-1. Delete `VidGrab5.zip` and add a standard Android `.gitignore`.
+1. ~~Delete `VidGrab5.zip`~~ (done) and add a standard Android `.gitignore`.
 2. Add the Gradle wrapper (8.7) and switch CI to `./gradlew`.
 3. Fix the stale "Check links" message (L1).
 
