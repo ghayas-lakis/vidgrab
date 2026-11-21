@@ -6,9 +6,9 @@
 set -uo pipefail
 mode="${1:-core}"
 if [ "$mode" = youtube ]; then
-  filter="-Pandroid.testInstrumentationRunnerArguments.class=com.example.vidgrab.YouTubeTest"
+  filter="-Pandroid.testInstrumentationRunnerArguments.class=io.github.ghayaslakis.vidgrab.YouTubeTest"
 else
-  filter="-Pandroid.testInstrumentationRunnerArguments.notClass=com.example.vidgrab.YouTubeTest"
+  filter="-Pandroid.testInstrumentationRunnerArguments.notClass=io.github.ghayaslakis.vidgrab.YouTubeTest"
 fi
 mkdir -p ci-out
 rm -rf app/build/outputs/androidTest-results app/build/reports/androidTests

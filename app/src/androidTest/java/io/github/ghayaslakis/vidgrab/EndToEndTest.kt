@@ -1,4 +1,4 @@
-package com.example.vidgrab
+package io.github.ghayaslakis.vidgrab
 
 import android.content.Context
 import androidx.test.core.app.ActivityScenario

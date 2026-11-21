@@ -12,10 +12,10 @@ val abiOverride = (project.findProperty("vidgrab.abis") as String?)?.split(",")?
 val fixedKey = System.getenv("VIDGRAB_KEYSTORE_FILE")?.let { file(it) }?.takeIf { it.exists() }
 
 android {
-    namespace = "com.example.vidgrab"
+    namespace = "io.github.ghayaslakis.vidgrab"
     compileSdk = 34
     defaultConfig {
-        applicationId = "com.example.vidgrab"
+        applicationId = "io.github.ghayaslakis.vidgrab"
         minSdk = 29
         targetSdk = 34
         versionCode = 3

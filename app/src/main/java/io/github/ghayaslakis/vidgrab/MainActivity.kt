@@ -1,4 +1,4 @@
-package com.example.vidgrab
+package io.github.ghayaslakis.vidgrab
 
 import android.animation.LayoutTransition
 import android.animation.ObjectAnimator

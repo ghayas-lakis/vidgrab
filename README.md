@@ -12,7 +12,10 @@ VidGrab bundles [yt-dlp](https://github.com/yt-dlp/yt-dlp) and FFmpeg through th
 - **Pause, resume and stop.** *Pause* keeps the partial file and *Start* continues from it. *Stop* discards the partial file.
 - **Survives bad connections.** When the connection drops or switches (for example mobile data to Wi-Fi), downloads stop at once and resume from the partial file on the new connection. If a resumed download stays far slower than it was before the interruption, it reconnects (at most twice). Progress, speed and ETA stay visible through interruptions. Readable messages are shown, such as "This video is private" or "Phone storage is full".
 - **Wi-Fi only by default.** Downloads wait for Wi-Fi (a VPN running over Wi-Fi counts). Untick *Download on Wi-Fi only* to use mobile data as well. Checking links still works on mobile data, because it uses very little.
-- **Background downloads.** A foreground service with a notification and a wake lock keeps downloads running when the app is in the background. Pressing *Back* during a download sends the app to the background instead of closing it.
+- **Background downloads.** A foreground service with a wake lock keeps downloads running when the app is in the background, and even after you close it or swipe it away from Recents. Opening VidGrab again shows the same downloads, still running. Pressing *Back* during a download sends the app to the background instead of closing it.
+- **Notifications.** Each download has its own notification with progress, speed, ETA and **Pause** / **Stop** buttons. When it ends you get *Downloaded* (tap it to open the file), *Paused* (with **Resume**) or *Download failed* (with **Retry**).
+- **Playlists and channels.** Paste a playlist link and VidGrab lists its videos. Untick the ones you don't want and tap *Add ticked*: each becomes its own card. A link to one video inside a playlist still gives just that video.
+- **Sign in to sites.** *More → Sign in to a site* opens the site's login page inside VidGrab. After you sign in and tap *Done*, links and downloads use that login: for private or members-only videos, or when a site says "Sign in to confirm you're not a bot". The login stays on the phone; *More → Sign out of all sites* forgets it.
 - **Optimize.** FFmpeg remuxes the file without re-encoding. This fixes timestamps, drops corrupt packets and moves the MP4 index to the front ("faststart") so the video starts playing faster and seeks better. It can run automatically after each download, later on downloaded items, or on any video already on the phone (saved as a new "(optimized)" copy).
 - **Choose where files go.** The default is `Download/VidGrab`. You can pick any folder through the system folder picker.
 - **Engine updates.** The app checks for a new yt-dlp once a day at startup (about 3 MB), because sites change often and an outdated engine stops working with them. *More → Update engine* updates it on demand.
@@ -29,11 +32,23 @@ VidGrab bundles [yt-dlp](https://github.com/yt-dlp/yt-dlp) and FFmpeg through th
 
 ## Installing
 
-Every push to GitHub builds a debug APK through GitHub Actions.
+Every push to GitHub builds the APKs through GitHub Actions.
 
 1. Open the repository's **Actions** tab and select the latest successful **Build APK** run.
-2. Download the **VidGrab-apk** artifact and unzip it.
+2. Download the **VidGrab-apk** artifact and unzip it. It holds two APKs:
+   - `app-arm64-v8a-debug.apk`: for nearly every phone from the last 8 years. Use this one.
+   - `app-armeabi-v7a-debug.apk`: only for old 32-bit phones.
 3. Copy the `.apk` to your phone and open it. You may need to allow "Install unknown apps" for your file manager or browser.
+
+### The signing key (installing over the previous version)
+
+Android only installs a new build over the old one when both are signed with the same key. CI signs with VidGrab's fixed key, which is kept in a repository secret, never in the code:
+
+1. On GitHub: **Settings → Secrets and variables → Actions → New repository secret**.
+2. Name: `VIDGRAB_KEYSTORE`. Value: the whole content of `vidgrab-signing.base64.txt` (the key file, base64 encoded).
+3. Keep `vidgrab-signing.p12` somewhere safe: a build signed with another key needs an uninstall first.
+
+Without the secret, the build still works but uses a temporary key, so each new build needs an uninstall first (which also clears the list and the updated engine). The build shows a warning when that happens.
 
 ## Building from source
 
@@ -45,18 +60,18 @@ The repository has no Gradle wrapper, so you need Gradle installed:
 
 ```bash
 gradle assembleDebug
-# APK: app/build/outputs/apk/debug/app-debug.apk
+# APKs: app/build/outputs/apk/debug/app-arm64-v8a-debug.apk and app-armeabi-v7a-debug.apk
 ```
 
 Android Studio can also open the project directly.
 
 ## Automated tests
 
-Every push runs two GitHub Actions jobs:
+Every push, and a run every Monday (sites change even when the code doesn't), runs two GitHub Actions jobs:
 
 - **build** compiles the APK. On failure, Kotlin errors show up as annotations on the run's page.
 - **e2e** starts an Android 13 emulator, installs the app and uses it for real, with the bundled yt-dlp, Python and FFmpeg and a real network (`app/src/androidTest`, run by `ci/e2e.sh`):
-  - `EndToEndTest` (must pass): pastes a link to [testdata/vidgrab-test.mp4](testdata/vidgrab-test.mp4), downloads it, checks the saved file was optimized (its MP4 index moved to the front), runs *Optimize ticked files*, then *Delete ticked videos* and checks the file is gone. It also downloads *Audio only (MP3)* and checks the result is an MP3, and checks *Remove ticked unfinished*.
+  - `EndToEndTest` (must pass): pastes a link to [testdata/vidgrab-test.mp4](testdata/vidgrab-test.mp4), downloads it, checks the saved file was optimized (its MP4 index moved to the front), runs *Optimize ticked files*, then *Delete ticked videos* and checks the file is gone. It also downloads *Audio only (MP3)* and checks the result is an MP3, checks *Remove ticked unfinished*, adds a playlist link ([testdata/playlist.rss](testdata/playlist.rss)) and checks its two videos become cards, and closes the screen during a download to check that a new screen picks up the same download and its result.
   - `YouTubeTest` (warning only): downloads a short YouTube video. YouTube often blocks CI's data-center IPs, so a failure there is reported as a warning rather than failing the run.
 
 Test results, the HTML report and logcat are in the run's **e2e-results** artifact. The tests drive the app through a small set of hooks in `MainActivity` (see "UI TEST CONTRACT" there); keep them working when changing the UI.
@@ -82,13 +97,15 @@ Everything else is in the **More** sheet in the bottom bar:
 | Optimize ticked files | Remuxes the saved files of the ticked items in place. |
 | Optimize a video from my phone | Picks videos from your storage and saves optimized copies. |
 | Update engine | Updates yt-dlp to the newest (nightly) build. Not available while downloads are running. |
+| Sign in to a site | Opens a site's login page (YouTube, Instagram, Facebook, X, TikTok, Vimeo or any other) so links and downloads can use your login. |
+| Sign out of all sites | Forgets every login VidGrab saved. |
 | Remove all | Clears the whole list and discards partial downloads. Saved files are kept. |
 
 Each action shows how many videos it applies to, and is greyed out when that number is 0. Results appear as a short pop-up message, so you see them even when the list is scrolled down.
 
 If a site stops working, try **More → Update engine** first. Sites change often, and yt-dlp is updated to keep up.
 
-> **Installing a new build:** each CI build is signed with a new temporary debug key, so Android won't install it over the previous one. You have to uninstall first, which also clears the list and the updated engine. The app updates the engine again on its next start.
+> **Installing a new build:** with the signing key set up (see *Installing*), a new build installs over the old one and keeps your list. Version 1.2 changed the app's package name, so it installs as a new app next to older builds: uninstall the old *VidGrab* once.
 
 ## Permissions
 
@@ -96,7 +113,7 @@ If a site stops working, try **More → Update engine** first. Sites change ofte
 |---|---|
 | `INTERNET`, `ACCESS_NETWORK_STATE` | Downloading, and pausing or resuming when the connection changes |
 | `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_DATA_SYNC` | Keeping downloads alive in the background |
-| `POST_NOTIFICATIONS` | The "downloads running" notification (Android 13+) |
+| `POST_NOTIFICATIONS` | Download progress and "Downloaded" notifications (Android 13+) |
 | `WAKE_LOCK` | Keeping the CPU awake during downloads (released after 6 hours at most), and keeping Wi-Fi out of power-save mode while the screen is off |
 
 No storage permission is needed. Files are written through MediaStore (`Download/VidGrab`) or a folder you grant through the system picker.
@@ -106,12 +123,17 @@ No storage permission is needed. Files are written through MediaStore (`Download
 ```
 app/src/main/
 ├── AndroidManifest.xml
-├── java/com/example/vidgrab/
+├── java/io/github/ghayaslakis/vidgrab/
 │   ├── MainActivity.kt      # All UI (built in code, no XML layouts), link checking,
 │   │                        # download queue, retry logic, saving, FFmpeg optimize
-│   └── DownloadService.kt   # Foreground service + notification + wake lock
+│   ├── DownloadService.kt   # Foreground service + wake lock + Wi-Fi lock
+│   ├── Notifier.kt          # Per-download notifications and their buttons
+│   └── SignIn.kt            # In-app sign-in page and the cookies file for yt-dlp
 └── res/                     # Logo, launcher icons, launcher background color
-.github/workflows/build.yml  # CI: builds the debug APK on every push
+app/src/androidTest/         # End-to-end tests (run on an emulator by CI)
+ci/                          # build.sh, e2e.sh, annotate.py (used by the workflow)
+testdata/                    # Test video and test playlist for the end-to-end tests
+.github/workflows/build.yml  # CI: build + emulator tests on every push and every Monday
 ```
 
 Main dependencies:
@@ -121,17 +143,19 @@ Main dependencies:
 
 ## How it works
 
-1. **Checking a link** runs `yt-dlp --dump-single-json --no-playlist`. The app reads the `formats` list and builds the resolution menu from the video heights, keeping the largest reported size for each height.
+1. **Checking a link** runs `yt-dlp --dump-single-json --no-playlist --flat-playlist`. The app reads the `formats` list and builds the resolution menu from the video heights, keeping the largest reported size for each height. For a playlist, `--flat-playlist` lists its videos without checking each one; the ones you pick are then checked one by one.
 2. **Downloading** runs yt-dlp with `--continue`, retries, a 20 s socket timeout, 10 MB HTTP chunks and 4 parallel fragments for HLS/DASH streams. Progress is printed in a fixed format of the app's own (`--progress-template`) and parsed by the app. The output goes to a private folder (`files/dl/<hash of url+resolution>`), so a retry or resume always finds its partial file. Video and audio are merged into MP4. Audio-only uses `-x --audio-format mp3`.
 3. **Saving** copies the finished file into MediaStore Downloads or the chosen folder, then deletes the private copy.
-4. **Optimizing** runs the bundled `ffmpeg -c copy` with `+genpts+discardcorrupt` and `-movflags +faststart` (MP4/MOV/M4V) and replaces the file only if the result looks sane.
+4. **Signing in** saves the in-app browser's cookies for the sites the login visited, as a Netscape `cookies.txt` in the app's private storage. Each yt-dlp run gets its own copy through `--cookies`.
+5. **Optimizing** runs the bundled `ffmpeg -c copy` with `+genpts+discardcorrupt` and `-movflags +faststart` (MP4/MOV/M4V) and replaces the file only if the result looks sane.
 
 ## Known limitations
 
 See [IMPROVEMENT_PLAN.md](IMPROVEMENT_PLAN.md) for the full list of known bugs and the roadmap. The main ones:
 
-- Download state lives in the Activity. Rotation is handled, but closing the app from Recents during a download still breaks the link between the UI and the running download.
-- The app is debug-build only and uses the placeholder `com.example.vidgrab` package name.
+- If Android kills the whole app (rare while a download runs, because of the foreground service), running downloads stop. The list and partial files are kept, and *Start* continues them.
+- Google may refuse to sign in inside an app's browser ("This browser or app may not be secure"), so signing in to YouTube can fail even when other sites work.
+- Builds are debug builds, signed with VidGrab's own key (not for the Play Store).
 - The UI is English only.
 
 ## Legal
