@@ -64,6 +64,10 @@ import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 // ---------- design system ----------
 /**
@@ -138,6 +142,9 @@ private const val K_OK = 4
 
 // Marks our own progress lines (see --progress-template in buildRequest).
 private const val PROG = "VGP|"
+// The "Quality for new links" choices (Item.choices codes: height, 0 = best, -1 = audio only).
+private val QUALITIES = listOf(0 to "Best available", 1080 to "1080p", 720 to "720p", 480 to "480p",
+    360 to "360p", -1 to "Audio only (MP3)")
 // Start of optimize()'s answer for audio and other non-video files (expected, not an error).
 private const val NOT_VIDEO = "Not a video file"
 
@@ -414,6 +421,8 @@ class MainActivity : Activity() {
     private lateinit var input: EditText
     private lateinit var clearBtn: Button
     private lateinit var folderLabel: TextView
+    private lateinit var qualityLabel: TextView
+    private lateinit var summary: TextView
     private lateinit var list: LinearLayout
     private lateinit var status: TextView
     private lateinit var engineChip: TextView
@@ -441,8 +450,20 @@ class MainActivity : Activity() {
         private val running = ConcurrentHashMap.newKeySet<String>()
         private val items = CopyOnWriteArrayList<Item>()
         private val imgPool = Executors.newFixedThreadPool(2)         // thumbnails
-        private val analyzer = Executors.newSingleThreadExecutor()   // link checks, optimizing
-        private val downloader = Executors.newFixedThreadPool(2)
+        private val analyzer = Executors.newSingleThreadExecutor()   // optimizing, cleanup
+        private val checker = Executors.newFixedThreadPool(3)        // link checks: 3 at a time
+        // The download queue. Its size is the "Downloads at the same time" setting; queued downloads
+        // wait (as "Queued...") until a slot is free.
+        private val downloader = ThreadPoolExecutor(2, 2, 30L, TimeUnit.SECONDS, LinkedBlockingQueue<Runnable>())
+        const val MAX_PARALLEL = 5
+
+        /** Changes how many downloads run at once. Running ones continue; the queue follows the new size. */
+        private fun setParallel(n: Int) {
+            val k = n.coerceIn(1, MAX_PARALLEL)
+            // the maximum may never be below the core size, so the order depends on the direction
+            if (k > downloader.maximumPoolSize) { downloader.maximumPoolSize = k; downloader.corePoolSize = k }
+            else { downloader.corePoolSize = k; downloader.maximumPoolSize = k }
+        }
         private val checking = ConcurrentHashMap.newKeySet<String>()   // links being checked right now
         private val failed = ConcurrentHashMap.newKeySet<String>()     // links that cannot be downloaded (not retried)
         @Volatile private var ready = false
@@ -731,6 +752,36 @@ class MainActivity : Activity() {
 
     private fun subText(t: String) = label(t, T_CAPTION, pal.muted).apply { setPadding(0, px(2), 0, 0) }
 
+    /** A compact "−  2  +" control for a small number. */
+    private fun stepper(value: Int, min: Int, max: Int, changed: (Int) -> Unit): LinearLayout {
+        var v = value.coerceIn(min, max)
+        val box = hrow()
+        val num = label(v.toString(), T_TITLE, pal.text, MEDIUM).apply {
+            gravity = Gravity.CENTER
+            minWidth = px(28)
+        }
+        val minus = btn("−", TONAL, 0, 34) {}
+        val plus = btn("+", TONAL, 0, 34) {}
+        fun refresh() {
+            num.text = v.toString()
+            minus.isEnabled = v > min
+            plus.isEnabled = v < max
+        }
+        minus.setOnClickListener { if (v > min) { v--; refresh(); changed(v) } }
+        plus.setOnClickListener { if (v < max) { v++; refresh(); changed(v) } }
+        for (b in listOf(minus, plus)) {
+            b.setPadding(0, 0, 0, 0)
+            b.textSize = T_TITLE + 2
+        }
+        minus.contentDescription = "Fewer"
+        plus.contentDescription = "More"
+        box.addView(minus, lp(px(34), px(34)))
+        box.addView(num, lp(WRAP, WRAP).apply { marginStart = px(S1); marginEnd = px(S1) })
+        box.addView(plus, lp(px(34), px(34)))
+        refresh()
+        return box
+    }
+
     private fun addDivider(parent: LinearLayout, inset: Int) = parent.addView(
         View(this).apply { setBackgroundColor(pal.outline) },
         lp(MATCH, 1).apply { marginStart = px(inset); marginEnd = px(S3) })
@@ -963,6 +1014,20 @@ class MainActivity : Activity() {
             subText("Smoother playback and seeking. Turn off to optimize later"), opt)
         optRow.setOnClickListener { opt.toggle() }
         add(settings, optRow)
+        addDivider(settings, 60)
+        val par = stepper(parallel(), 1, MAX_PARALLEL) { n -> setParallelPref(n) }
+        add(settings, settingRow(G_DOWNLOAD, "Downloads at the same time",
+            subText("The rest wait in line. More helps with many small videos"), par))
+        addDivider(settings, 60)
+        qualityLabel = subText(qualityName(defaultQuality()))
+        val qChange = label("Change", T_LABEL, pal.accent, MEDIUM)
+        val qChev = Glyph(G_CHEVRON_RIGHT, pal.accent)
+        qChev.setBounds(0, 0, px(16), px(16))
+        qChange.setCompoundDrawablesRelative(null, null, qChev, null)
+        qChange.compoundDrawablePadding = px(2)
+        val qRow = settingRow(G_VIDEO, "Quality for new links", qualityLabel, qChange)
+        qRow.setOnClickListener { chooseQuality() }
+        add(settings, qRow)
         add(root, settings)
 
         // video list: heading with count + "Select all", empty state, then one card per video
@@ -987,6 +1052,9 @@ class MainActivity : Activity() {
         }
         listHead.addView(selectAll, lp(WRAP, WRAP))
         add(root, listHead)
+        // "3 active (2 at a time) · 4 done · 1 failed"
+        summary = label("", T_CAPTION, pal.muted, MEDIUM).apply { setPadding(px(S1), 0, px(S1), px(S1)) }
+        add(root, summary)
 
         val emptyBox = LinearLayout(this)
         emptyBox.orientation = LinearLayout.VERTICAL
@@ -1110,6 +1178,7 @@ class MainActivity : Activity() {
         super.onCreate(s)
         dp = resources.displayMetrics.density
         prefs = getSharedPreferences("vidgrab", MODE_PRIVATE)
+        setParallel(parallel())
         buildUi()
         host = this
         // A fresh process starts from the saved list; otherwise the live one (with running downloads) is shown.
@@ -1360,12 +1429,13 @@ class MainActivity : Activity() {
         }
         status.text = "Checking ${fresh.size} link(s)..."
         checking.addAll(fresh)
-        analyzer.execute {
-            val problems = mutableListOf<String>()
-            val details = StringBuilder()
-            var added = 0
-            for ((n, u) in fresh.withIndex()) {
-                onUi { h -> h.status.text = "Checking link ${n + 1} of ${fresh.size}..." }
+        // Up to 3 links are checked at the same time, so a long list of links is ready much sooner.
+        // Each check reports here when it ends; the last one writes the summary.
+        val left = AtomicInteger(fresh.size)
+        val added = AtomicInteger(0)
+        val problems = java.util.Collections.synchronizedList(mutableListOf<Pair<Int, String>>())
+        val details = StringBuffer()
+        for ((n, u) in fresh.withIndex()) checker.execute {
                 val jar = Cookies.forRun(this)
                 try {
                     val req = YoutubeDLRequest(u)
@@ -1380,13 +1450,13 @@ class MainActivity : Activity() {
                         failed.add(u)                   // handled: don't check the playlist link again
                         checking.remove(u)
                         if (entries.isEmpty()) {
-                            problems.add("Link ${n + 1}: This playlist has no videos VidGrab can download")
+                            problems.add(n to "Link ${n + 1}: This playlist has no videos VidGrab can download")
                         } else {
                             val title = j.optString("title", "").ifEmpty { "Playlist" }
                             onUi { h -> h.pickFromPlaylist(u, title, entries) }
-                            added++
+                            added.incrementAndGet()
                         }
-                        continue
+                        return@execute
                     }
                     val sizes = mutableMapOf<Int, Long>()
                     val fm = j.optJSONArray("formats")
@@ -1414,28 +1484,34 @@ class MainActivity : Activity() {
                     onUi { h ->
                         if (items.none { it.url == u }) {
                             h.addRow(item)
+                            h.preselect(item)
                             item.check.isChecked = true
                             h.persist()
                         }
                         checking.remove(u)
                     }
-                    added++
+                    added.incrementAndGet()
                 } catch (e: Exception) {
                     val (msg, net) = why(e)
                     if (!net) failed.add(u)
                     checking.remove(u)
-                    problems.add("Link ${n + 1}: $msg")
+                    problems.add(n to "Link ${n + 1}: $msg")
                     details.append(u).append('\n').append(rawError(e)).append("\n\n")
                 } finally {
                     jar?.delete()
+                    val rest = left.decrementAndGet()
+                    if (rest > 0) onUi { h -> h.status.text = "Checking links: ${fresh.size - rest} of ${fresh.size} done..." }
+                    else {
+                        checkErr = details.toString().trim()
+                        val probs = synchronized(problems) { problems.sortedBy { it.first }.map { it.second } }
+                        val ok = added.get()
+                        onUi { h ->
+                            val head = if (ok > 0) "Pick a quality for each video, or tick them all and tap Download." else ""
+                            val tail = if (probs.isNotEmpty()) "Tap here for details." else ""
+                            h.status.text = (listOf(head) + probs + tail).filter { it.isNotEmpty() }.joinToString("\n")
+                        }
+                    }
                 }
-            }
-            checkErr = details.toString().trim()
-            onUi { h ->
-                val head = if (added > 0) "Pick a resolution for each video, then tap Download." else ""
-                val tail = if (problems.isNotEmpty()) "Tap here for details." else ""
-                h.status.text = (listOf(head) + problems + tail).filter { it.isNotEmpty() }.joinToString("\n")
-            }
         }
     }
 
@@ -1675,7 +1751,23 @@ class MainActivity : Activity() {
         countBadge.visibility = if (n == 0) View.GONE else View.VISIBLE
         empty.visibility = if (n == 0) View.VISIBLE else View.GONE
         selectAll.visibility = if (n == 0) View.INVISIBLE else View.VISIBLE
-        dlBtn.text = iconText(G_DOWNLOAD, if (sel > 0) "Download ($sel)" else "Download", Color.WHITE)
+        // Nothing ticked: the button downloads every video that isn't downloaded yet.
+        val pending = items.count { !it.done && !it.busy }
+        dlBtn.text = iconText(G_DOWNLOAD, when {
+            sel > 0 -> "Download ($sel)"
+            pending > 0 -> "Download all ($pending)"
+            else -> "Download"
+        }, Color.WHITE)
+        val active = items.count { it.busy }
+        val done = items.count { it.done }
+        val bad = items.count { !it.busy && !it.done && it.err.isNotEmpty() }
+        summary.text = listOf(
+            if (active > 0) "$active active (${parallel()} at a time)" else "",
+            if (done > 0) "$done done" else "",
+            if (bad > 0) "$bad failed" else "",
+            if (n > 0 && active == 0 && done == 0 && bad == 0) "$n ready to download" else "",
+        ).filter { it.isNotEmpty() }.joinToString("  ·  ")
+        summary.visibility = if (n == 0) View.GONE else View.VISIBLE
         syncing = true
         selectAll.isChecked = n > 0 && items.all { it.check.isChecked }
         syncing = false
@@ -1828,6 +1920,56 @@ class MainActivity : Activity() {
             w.decorView.setPadding(0, 0, 0, 0)
         }
         d.show()
+    }
+
+    // ---------- download settings: how many at once, default quality ----------
+    private fun parallel() = prefs.getInt("parallel", 2).coerceIn(1, MAX_PARALLEL)
+
+    private fun setParallelPref(n: Int) {
+        prefs.edit().putInt("parallel", n).apply()
+        setParallel(n)
+        updateCounts()
+    }
+
+    /** Height in pixels, 0 = best available, -1 = audio only (the same codes as Item.choices). */
+    private fun defaultQuality() = prefs.getInt("quality", 0)
+
+    private fun qualityName(q: Int) = QUALITIES.firstOrNull { it.first == q }?.second ?: "Best available"
+
+    private fun setDefaultQuality(q: Int) {
+        prefs.edit().putInt("quality", q).apply()
+        qualityLabel.text = qualityName(q)
+    }
+
+    /**
+     * Puts a card on the default quality: that height or the nearest one below it (the smallest one when
+     * all are higher), Best available, or audio only.
+     */
+    private fun preselect(a: Item, q: Int = defaultQuality()) {
+        val hs = a.choices.filter { it > 0 }
+        val want = when {
+            q <= 0 -> q
+            else -> hs.filter { it <= q }.maxOrNull() ?: hs.minOrNull() ?: 0
+        }
+        val idx = a.choices.indexOf(want)
+        if (idx >= 0) a.spinner.setSelection(idx)
+    }
+
+    private fun chooseQuality() {
+        val cur = QUALITIES.indexOfFirst { it.first == defaultQuality() }.coerceAtLeast(0)
+        var pick = cur
+        val ticked = items.filter { it.check.isChecked && !it.done && !it.busy }
+        val b = AlertDialog.Builder(this, dialogTheme()).setTitle("Quality for new links")
+            .setSingleChoiceItems(QUALITIES.map { it.second }.toTypedArray(), cur) { _, k -> pick = k }
+            .setPositiveButton("Save") { _, _ -> setDefaultQuality(QUALITIES[pick].first) }
+            .setNegativeButton("Cancel", null)
+        if (ticked.isNotEmpty()) b.setNeutralButton("Also set ${ticked.size} ticked") { _, _ ->
+            setDefaultQuality(QUALITIES[pick].first)
+            for (a in ticked) preselect(a)
+            persist()
+            tell("Set ${ticked.size} ticked video(s) to ${QUALITIES[pick].second} (or the nearest one they have).")
+        }
+        b.show()
     }
 
     // ---------- signing in to sites ----------
@@ -2199,8 +2341,18 @@ class MainActivity : Activity() {
         if (items.isEmpty()) { status.text = "Paste links above first"; return }
         if (!ready) { status.text = "The download engine is still starting - try again in a moment"; return }
         val sel = items.filter { it.check.isChecked }
-        if (sel.isEmpty()) { tell("Tick the videos you want to download"); return }
+        if (sel.isEmpty()) {
+            // "Download all (N)": every video that isn't downloaded or downloading yet
+            val todo = items.filter { !it.done && !it.busy }
+            if (todo.isEmpty()) { tell("Everything in the list is already downloaded or downloading"); return }
+            for (a in todo) a.check.isChecked = true
+            todo.forEach { startItem(it) }
+            tell("Downloading ${todo.size} video(s), ${parallel()} at a time.")
+            return
+        }
         sel.forEach { startItem(it) }
+        val queued = sel.count { it.busy } - parallel()
+        if (queued > 0) status.text = "${sel.count { it.busy }} downloads: ${parallel()} at a time, the rest start as soon as one finishes."
         if (online() && !canDownload())
             status.text = "Waiting for Wi-Fi. Turn off \"Wi-Fi only\" in Settings to use mobile data."
     }
@@ -2221,6 +2373,7 @@ class MainActivity : Activity() {
         setState(a, at(a) + "Queued...", C_PRIMARY)
         refreshButtons(a)
         refreshService()
+        updateCounts()
         persist()
         downloader.execute { work(a, choice, dir) }
     }
@@ -2524,6 +2677,7 @@ class MainActivity : Activity() {
                 if (a.cancelled) { a.bar.progress = 0; h.setState(a, "Stopped") }
                 h.refreshButtons(a)
                 h.refreshService()
+                h.updateCounts()
             }
         }
     }
@@ -2568,6 +2722,10 @@ class MainActivity : Activity() {
     internal fun testDeleteTicked() = deleteTicked()
     internal fun testRemoveUnfinished() = removeUnfinished()
     internal fun testRemoveAll() = removeAll()
+    internal fun testSetParallel(n: Int) = setParallelPref(n)           // "Downloads at the same time"
+    internal fun testSetDefaultQuality(q: Int) = setDefaultQuality(q)  // "Quality for new links"
+    internal fun testQuality(a: Item) = a.labels[a.spinner.selectedItemPosition]
+    internal fun testRunningNow() = items.count { it.proc }             // yt-dlp processes running
 
     // ---------- engine update ----------
     private fun update() {

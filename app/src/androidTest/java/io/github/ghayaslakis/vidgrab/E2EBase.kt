@@ -29,7 +29,7 @@ abstract class E2EBase {
             .grantRuntimePermission(ctx.packageName, Manifest.permission.POST_NOTIFICATIONS)
         // Empty list, default folder, mobile data allowed (the emulator's network may not count as Wi-Fi).
         ctx.getSharedPreferences("vidgrab", Context.MODE_PRIVATE).edit()
-            .remove("items").remove("tree")
+            .remove("items").remove("tree").remove("parallel").remove("quality")
             .putBoolean("wifiOnly", false).putBoolean("optimize", true)
             .commit()
         sc = ActivityScenario.launch(MainActivity::class.java)

@@ -124,4 +124,54 @@ class EndToEndTest : E2EBase() {
         assertEquals(report(), "Done - saved", act { it.testState(c) })
         assertEquals("Saved files: ${c.files}", 1, c.files.size)
     }
+
+    /**
+     * Several links pasted at once (checked in parallel), nothing ticked, "Download all", with
+     * "Downloads at the same time" = 1: both finish, and never more than one runs at a time.
+     */
+    @Test
+    fun f_downloadAllOneAtATime() {
+        act { it.testSetParallel(1) }
+        try {
+            act { it.testAddLinks(TEST_VIDEO + "\n" + TEST_VIDEO_CDN) }
+            waitFor("both links to get a card", 240) { a ->
+                val urls = a.testItems().map { it.url }
+                when {
+                    TEST_VIDEO in urls && TEST_VIDEO_CDN in urls -> OK
+                    a.testCheckErr().isNotEmpty() && !a.testStatus().startsWith("Checking") -> "The link check failed"
+                    else -> null
+                }
+            }
+            act { a ->
+                for (c in a.testItems()) c.check.isChecked = false
+                a.testDownloadTicked()                       // nothing ticked: downloads all
+            }
+            var most = 0
+            waitFor("both downloads to finish", 600) { a ->
+                most = maxOf(most, a.testRunningNow())
+                val states = a.testItems().map { a.testState(it) }
+                when {
+                    states.any { "Tap Start to retry" in it } -> "A download failed: $states"
+                    states.size == 2 && states.all { it.startsWith("Done") } -> OK
+                    else -> null
+                }
+            }
+            assertTrue("At most 1 download should run at a time, saw $most", most <= 1)
+            for (c in act { it.testItems() }) assertEquals(report(), "Done - saved", act { it.testState(c) })
+        } finally {
+            act { it.testSetParallel(2) }
+        }
+    }
+
+    /** "Quality for new links" = Audio only: a new card starts on Audio only (MP3). */
+    @Test
+    fun g_defaultQuality() {
+        act { it.testSetDefaultQuality(-1) }
+        try {
+            val card = addLink(TEST_VIDEO)
+            assertEquals("Audio only (MP3)", act { it.testQuality(card) })
+        } finally {
+            act { it.testSetDefaultQuality(0) }
+        }
+    }
 }

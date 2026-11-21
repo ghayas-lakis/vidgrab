@@ -6,9 +6,10 @@ VidGrab bundles [yt-dlp](https://github.com/yt-dlp/yt-dlp) and FFmpeg through th
 
 ## Features
 
-- **Automatic link checking.** Paste one or more links (one per line), tap *Paste*, or share a link to VidGrab from another app. Every new link is checked in the background and its available resolutions are listed.
-- **Per-video resolution choice.** You can pick a specific height (with an approximate size), *Best available*, or *Audio only (MP3)*.
-- **Batch downloads.** Up to two downloads run at the same time, and *Select all* ticks every item.
+- **Add as many links as you like.** Paste them all at once (one per line), tap *Paste* as often as you want, or share links to VidGrab from other apps. New links are checked in the background, 3 at a time, and each becomes a card with its available qualities.
+- **Download all, some or one.** With nothing ticked, the bottom button says **Download all (N)** and downloads every video that isn't downloaded yet. Tick some cards (or *Select all*) to download only those, or use a card's own **Start** button for just that one. A line above the list shows how many are active, done and failed.
+- **Downloads at the same time.** Settings has a **−  2  +** control (1 to 5). The rest wait as *Queued...* and start as soon as one finishes. More at once helps with many small videos. It doesn't make one big video faster, because they share your connection, and some sites slow down or block above about 3.
+- **Quality per video, with a default.** Each card has its own quality picker: a specific height (with an approximate size), *Best available*, or *Audio only (MP3)*. **Settings → Quality for new links** sets the one new cards start on: that height or the nearest one below it. *Also set N ticked* applies it to the ticked cards in one go.
 - **Pause, resume and stop.** *Pause* keeps the partial file and *Start* continues from it. *Stop* discards the partial file.
 - **Survives bad connections.** When the connection drops or switches (for example mobile data to Wi-Fi), downloads stop at once and resume from the partial file on the new connection. If a resumed download stays far slower than it was before the interruption, it reconnects (at most twice). Progress, speed and ETA stay visible through interruptions. Readable messages are shown, such as "This video is private" or "Phone storage is full".
 - **Wi-Fi only by default.** Downloads wait for Wi-Fi (a VPN running over Wi-Fi counts). Untick *Download on Wi-Fi only* to use mobile data as well. Checking links still works on mobile data, because it uses very little.
@@ -71,7 +72,7 @@ Every push, and a run every Monday (sites change even when the code doesn't), ru
 
 - **build** compiles the APK. On failure, Kotlin errors show up as annotations on the run's page.
 - **e2e** starts an Android 13 emulator, installs the app and uses it for real, with the bundled yt-dlp, Python and FFmpeg and a real network (`app/src/androidTest`, run by `ci/e2e.sh`):
-  - `EndToEndTest` (must pass): pastes a link to [testdata/vidgrab-test.mp4](testdata/vidgrab-test.mp4), downloads it, checks the saved file was optimized (its MP4 index moved to the front), runs *Optimize ticked files*, then *Delete ticked videos* and checks the file is gone. It also downloads *Audio only (MP3)* and checks the result is an MP3, checks *Remove ticked unfinished*, adds a playlist link ([testdata/playlist.rss](testdata/playlist.rss)) and checks its two videos become cards, and closes the screen during a download to check that a new screen picks up the same download and its result.
+  - `EndToEndTest` (must pass): pastes a link to [testdata/vidgrab-test.mp4](testdata/vidgrab-test.mp4), downloads it, checks the saved file was optimized (its MP4 index moved to the front), runs *Optimize ticked files*, then *Delete ticked videos* and checks the file is gone. It also downloads *Audio only (MP3)* and checks the result is an MP3, checks *Remove ticked unfinished*, adds a playlist link ([testdata/playlist.rss](testdata/playlist.rss)) and checks its two videos become cards, pastes two links at once and uses *Download all* with *Downloads at the same time* set to 1 (checking that both finish and never more than one runs), checks that *Quality for new links* sets new cards, and closes the screen during a download to check that a new screen picks up the same download and its result.
   - `YouTubeTest` (warning only): downloads a short YouTube video. YouTube often blocks CI's data-center IPs, so a failure there is reported as a warning rather than failing the run.
 
 Test results, the HTML report and logcat are in the run's **e2e-results** artifact. The tests drive the app through a small set of hooks in `MainActivity` (see "UI TEST CONTRACT" there); keep them working when changing the UI.
@@ -82,7 +83,7 @@ To run the tests locally on a connected device or emulator: `gradle connectedDeb
 
 1. Paste links into the box, tap **Paste**, or use **Share → VidGrab** from a browser or app.
 2. Each link gets a card with its thumbnail (with the video length), title, site and uploader. Pick a quality in the pill under the title.
-3. Tick the videos you want (tap the circle on the thumbnail, or anywhere on the card) and tap **Download (N)** in the bottom bar. Each card also has its own **Start / Pause** button and a round **Stop** button. The status line is blue while working, amber while waiting, red on errors and green when done.
+3. Tick the videos you want (tap the circle on the thumbnail, or anywhere on the card) and tap **Download (N)** in the bottom bar. With nothing ticked, the button is **Download all (N)**. Each card also has its own **Start / Pause** button and a round **Stop** button. The status line is blue while working, amber while waiting, red on errors and green when done.
 4. Finished files go to the folder shown in **Settings → Save to** (tap the row to change it). Finished cards switch to **Open** and a round **Share** button.
 
 The app follows the system's light or dark theme.
