@@ -62,10 +62,12 @@ Everything else is in the **More** menu in the bottom bar:
 | Menu item | What it does |
 |---|---|
 | Remove completed | Clears finished items from the list. Files are kept. |
-| Remove unfinished | Removes the *ticked* items that haven't finished, stopping them if they are running, and discards their partial files. |
+| Remove ticked unfinished | Removes the *ticked* items that haven't finished, stopping them if they are running, and discards their partial files. |
+| Delete ticked videos | Deletes the *ticked* videos, finished or not. Saved files are deleted from the phone, unfinished downloads are stopped and discarded, and the cards are removed. |
+| Optimize ticked files | Remuxes the saved files of the ticked items in place. |
 | Remove all | Clears the whole list and discards partial downloads. Saved files are kept. |
-| Delete files | Deletes the saved files of the ticked items. |
-| Optimize files | Remuxes the saved files of the ticked items in place. |
+
+Each menu item shows how many videos it applies to, and is greyed out when that number is 0. Results appear as a short pop-up message, so you see them even when the list is scrolled down.
 | Optimize a video from my phone | Picks videos from your storage and saves optimized copies. |
 | Update engine | Updates yt-dlp to the newest (nightly) build. Not available while downloads are running. |
 

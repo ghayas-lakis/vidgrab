@@ -820,23 +820,28 @@ class MainActivity : Activity() {
     /** Everything that is not the main Download action. */
     private fun showMenu(anchor: View) {
         val busy = items.any { it.busy }
+        // Counts in the labels (and greyed-out items) show at a glance what each action would touch.
+        val ticked = items.filter { it.check.isChecked }
+        val tickedUnfinished = ticked.count { !it.done }
+        val tickedWithFiles = ticked.count { it.files.isNotEmpty() }
+        val completed = items.count { it.done }
         PopupMenu(this, anchor).apply {
-            menu.add(0, 1, 1, "Remove completed")
-            menu.add(0, 2, 2, "Remove unfinished (ticked)")
-            menu.add(0, 3, 3, "Delete files (ticked)")
-            menu.add(0, 4, 4, "Optimize files (ticked)")
+            menu.add(0, 1, 1, "Remove completed ($completed)").isEnabled = completed > 0
+            menu.add(0, 2, 2, "Remove ticked unfinished ($tickedUnfinished)").isEnabled = tickedUnfinished > 0
+            menu.add(0, 3, 3, "Delete ticked videos (${ticked.size})").isEnabled = ticked.isNotEmpty()
+            menu.add(0, 4, 4, "Optimize ticked files ($tickedWithFiles)").isEnabled = tickedWithFiles > 0
             menu.add(0, 5, 5, "Optimize a video from my phone").isEnabled = ready
             menu.add(0, 6, 6, when {
                 updating -> "Updating engine..."
                 busy -> "Update engine (after downloads finish)"
                 else -> "Update engine"
             }).isEnabled = ready && !updating && !busy
-            menu.add(0, 7, 7, "Remove all")
+            menu.add(0, 7, 7, "Remove all (${items.size})").isEnabled = items.isNotEmpty()
             setOnMenuItemClickListener {
                 when (it.itemId) {
                     1 -> removeCompleted()
                     2 -> removeUnfinished()
-                    3 -> deleteFiles()
+                    3 -> deleteTicked()
                     4 -> optimizeFiles()
                     5 -> pickVideos()
                     6 -> update()
@@ -895,10 +900,9 @@ class MainActivity : Activity() {
 
     private fun removeCompleted() {
         val gone = items.filter { it.done }
-        gone.forEach { list.removeView(it.box); items.remove(it) }
-        persist()
-        updateCounts()
-        status.text = "Removed ${gone.size} completed item(s). Files are kept."
+        if (gone.isEmpty()) { tell("No finished downloads to remove yet"); return }
+        dropFromList(gone)
+        tell("Removed ${gone.size} completed item(s). Files are kept.")
     }
 
     /** Deletes the partial-download folders of every resolution of this item, except one still in use. */
@@ -924,56 +928,85 @@ class MainActivity : Activity() {
         }
     }
 
+    /**
+     * Shows a result both in the status bubble and as a toast: the bubble sits at the top of the page,
+     * out of sight when the list is scrolled, which made these actions look like they did nothing.
+     */
+    private fun tell(msg: String) {
+        status.text = msg
+        Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+    }
+
+    /** Takes items off the list (and off the screen). Call after discard() or when they are finished. */
+    private fun dropFromList(sel: List<Item>) {
+        for (a in sel) {
+            list.removeView(a.box)
+            items.remove(a)
+        }
+        persist()
+        refreshService()
+        updateCounts()
+    }
+
     private fun removeUnfinished() {
-        val sel = items.filter { it.check.isChecked && !it.done }
-        if (sel.isEmpty()) { status.text = "Tick the unfinished downloads you want to remove"; return }
-        confirm("Remove ${sel.size} ticked unfinished download(s) from the list? Their partial files are discarded.") {
-            for (a in sel) {
-                discard(a)
-                list.removeView(a.box)
-                items.remove(a)
-            }
-            persist()
-            refreshService()
-            updateCounts()
-            status.text = "Removed ${sel.size} unfinished download(s)."
+        val ticked = items.filter { it.check.isChecked }
+        val sel = ticked.filter { !it.done }
+        if (sel.isEmpty()) {
+            tell(if (ticked.isEmpty()) "Tick the unfinished downloads you want to remove first"
+                else "The ticked videos are already finished - use \"Delete ticked videos\" or \"Remove completed\"")
+            return
+        }
+        confirm("Remove ${sel.size} unfinished download(s) from the list? Their partial files are discarded.") {
+            for (a in sel) discard(a)
+            dropFromList(sel)
+            tell("Removed ${sel.size} unfinished download(s).")
         }
     }
 
     private fun removeAll() {
-        if (items.isEmpty()) return
+        if (items.isEmpty()) { tell("The list is already empty"); return }
         confirm("Remove every item from the list, including unfinished ones? Partial downloads are discarded. Saved files are kept.") {
-            for (a in items) discard(a)
-            items.clear()
-            list.removeAllViews()
-            persist()
-            updateCounts()
-            status.text = "List cleared."
+            val all = items.toList()
+            for (a in all) discard(a)
+            dropFromList(all)
+            tell("List cleared.")
         }
     }
 
-    private fun deleteFiles() {
-        val sel = items.filter { it.check.isChecked && it.files.isNotEmpty() }
-        if (sel.isEmpty()) { status.text = "Tick videos that have downloaded files first"; return }
-        confirm("Delete the downloaded files of ${sel.size} ticked item(s) from your download folder?") {
+    /** Deletes one saved file. A file that is already gone counts as deleted. */
+    private fun deleteSaved(f: String): Boolean = try {
+        val u = Uri.parse(f)
+        if (u.authority == MediaStore.AUTHORITY) contentResolver.delete(u, null, null)
+        else DocumentsContract.deleteDocument(contentResolver, u)
+        true
+    } catch (_: java.io.FileNotFoundException) {
+        true
+    } catch (_: Exception) {
+        false
+    }
+
+    /**
+     * Deletes the ticked videos, finished or not: their saved files are deleted from the phone,
+     * unfinished downloads are stopped and their partial files discarded, and the cards are removed.
+     */
+    private fun deleteTicked() {
+        val sel = items.filter { it.check.isChecked }
+        if (sel.isEmpty()) { tell("Tick the videos you want to delete first"); return }
+        val savedFiles = sel.fold(0) { n, a -> n + a.files.size }
+        val msg = "Delete ${sel.size} ticked video(s)?\n\n" +
+            (if (savedFiles > 0) "$savedFiles saved file(s) will be deleted from your phone.\n" else "") +
+            "Unfinished downloads are stopped and discarded. The videos are removed from the list."
+        confirm(msg) {
+            var notDeleted = 0
             for (a in sel) {
-                for (f in a.files) {
-                    try {
-                        val u = Uri.parse(f)
-                        if (u.authority == MediaStore.AUTHORITY) contentResolver.delete(u, null, null)
-                        else DocumentsContract.deleteDocument(contentResolver, u)
-                    } catch (_: Exception) {}
-                }
+                for (f in a.files) if (!deleteSaved(f)) notDeleted++
                 a.files.clear()
-                a.done = false
-                a.pct = -1
-                a.bar.progress = 0
-                setState(a, "Files deleted")
-                refreshButtons(a)
+                discard(a)
             }
-            persist()
-            updateCounts()
-            status.text = "Deleted files of ${sel.size} item(s)."
+            dropFromList(sel)
+            tell(if (notDeleted == 0) "Deleted ${sel.size} video(s)."
+                else "Deleted ${sel.size} video(s) from the list, but $notDeleted file(s) could not be deleted " +
+                    "(VidGrab may no longer own them after a reinstall). Delete them in your Files app.")
         }
     }
 
@@ -1008,7 +1041,7 @@ class MainActivity : Activity() {
 
     private fun optimizeFiles() {
         val sel = items.filter { it.check.isChecked && it.files.isNotEmpty() }
-        if (sel.isEmpty()) { status.text = "Tick videos that have downloaded files first"; return }
+        if (sel.isEmpty()) { tell("Tick finished videos first - only downloaded files can be optimized"); return }
         status.text = "Optimizing ${sel.size} item(s)..."
         analyzer.execute {
             var fixed = 0
@@ -1094,7 +1127,7 @@ class MainActivity : Activity() {
         if (items.isEmpty()) { status.text = "Paste links above first"; return }
         if (!ready) { status.text = "The download engine is still starting - try again in a moment"; return }
         val sel = items.filter { it.check.isChecked }
-        if (sel.isEmpty()) { status.text = "Tick the videos you want to download"; return }
+        if (sel.isEmpty()) { tell("Tick the videos you want to download"); return }
         sel.forEach { startItem(it) }
         if (online() && !canDownload())
             status.text = "Waiting for Wi-Fi. Turn off \"Wi-Fi only\" in Settings to use mobile data."
