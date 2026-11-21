@@ -6,7 +6,7 @@ VidGrab bundles [yt-dlp](https://github.com/yt-dlp/yt-dlp) and FFmpeg through th
 
 ## Features
 
-- **Automatic link checking.** Paste one or more links (one per line), use *Paste from clipboard*, or share a link to VidGrab from another app. Every new link is checked in the background and its available resolutions are listed.
+- **Automatic link checking.** Paste one or more links (one per line), tap *Paste*, or share a link to VidGrab from another app. Every new link is checked in the background and its available resolutions are listed.
 - **Per-video resolution choice.** You can pick a specific height (with an approximate size), *Best available*, or *Audio only (MP3)*.
 - **Batch downloads.** Up to two downloads run at the same time, and *Select all* ticks every item.
 - **Pause, resume and stop.** *Pause* keeps the partial file and *Start* continues from it. *Stop* discards the partial file.
@@ -65,24 +65,26 @@ To run the tests locally on a connected device or emulator: `gradle connectedDeb
 
 ## How to use
 
-1. Paste links into the box, tap **Paste from clipboard**, or use **Share → VidGrab** from a browser or app.
-2. Each link gets a card with its thumbnail, title, site, length and uploader. Choose a **Quality** in each card.
-3. Tick the videos you want and tap **Download (N)** in the bottom bar. Each card also has its own **Start / Pause** and **Stop** buttons. The status line is blue while working, amber while waiting, red on errors and green when done.
-4. Finished files go to the folder shown on the **Save to:** button. Finished cards switch to **Open** and **Share**.
+1. Paste links into the box, tap **Paste**, or use **Share → VidGrab** from a browser or app.
+2. Each link gets a card with its thumbnail (with the video length), title, site and uploader. Pick a quality in the pill under the title.
+3. Tick the videos you want (tap the circle on the thumbnail, or anywhere on the card) and tap **Download (N)** in the bottom bar. Each card also has its own **Start / Pause** button and a round **Stop** button. The status line is blue while working, amber while waiting, red on errors and green when done.
+4. Finished files go to the folder shown in **Settings → Save to** (tap the row to change it). Finished cards switch to **Open** and a round **Share** button.
 
-Everything else is in the **More** menu in the bottom bar:
+The app follows the system's light or dark theme.
 
-| Menu item | What it does |
+Everything else is in the **More** sheet in the bottom bar:
+
+| Action | What it does |
 |---|---|
 | Remove completed | Clears finished items from the list. Files are kept. |
 | Remove ticked unfinished | Removes the *ticked* items that haven't finished, stopping them if they are running, and discards their partial files. |
 | Delete ticked videos | Deletes the *ticked* videos, finished or not. Saved files are deleted from the phone, unfinished downloads are stopped and discarded, and the cards are removed. |
 | Optimize ticked files | Remuxes the saved files of the ticked items in place. |
-| Remove all | Clears the whole list and discards partial downloads. Saved files are kept. |
-
-Each menu item shows how many videos it applies to, and is greyed out when that number is 0. Results appear as a short pop-up message, so you see them even when the list is scrolled down.
 | Optimize a video from my phone | Picks videos from your storage and saves optimized copies. |
 | Update engine | Updates yt-dlp to the newest (nightly) build. Not available while downloads are running. |
+| Remove all | Clears the whole list and discards partial downloads. Saved files are kept. |
+
+Each action shows how many videos it applies to, and is greyed out when that number is 0. Results appear as a short pop-up message, so you see them even when the list is scrolled down.
 
 If a site stops working, try **More → Update engine** first. Sites change often, and yt-dlp is updated to keep up.
 

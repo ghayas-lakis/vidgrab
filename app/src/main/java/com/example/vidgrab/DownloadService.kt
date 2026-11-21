@@ -8,6 +8,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.graphics.Color
 import android.net.wifi.WifiManager
 import android.os.IBinder
 import android.os.PowerManager
@@ -53,6 +54,10 @@ class DownloadService : Service() {
                 .setContentTitle("VidGrab")
                 .setContentText(text)
                 .setSmallIcon(android.R.drawable.stat_sys_download)
+                .setColor(Color.parseColor("#3461FF"))     // the app's accent
+                .setCategory(Notification.CATEGORY_PROGRESS)
+                .setShowWhen(false)
+                .setOnlyAlertOnce(true)
                 .setContentIntent(pi)
                 .setOngoing(true)
                 .build()

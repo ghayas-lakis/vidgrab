@@ -1,21 +1,40 @@
 package com.example.vidgrab
 
+import android.animation.LayoutTransition
+import android.animation.ObjectAnimator
+import android.animation.PropertyValuesHolder
+import android.animation.ValueAnimator
 import android.app.Activity
 import android.app.AlertDialog
+import android.app.Dialog
 import android.app.NotificationManager
+import android.content.ClipboardManager
 import android.content.ContentValues
+import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
+import android.content.res.ColorStateList
+import android.content.res.Configuration
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.ColorFilter
+import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.PixelFormat
+import android.graphics.RectF
+import android.graphics.Typeface
+import android.graphics.drawable.ClipDrawable
+import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.Drawable
+import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.InsetDrawable
+import android.graphics.drawable.LayerDrawable
+import android.graphics.drawable.RippleDrawable
+import android.graphics.drawable.StateListDrawable
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.Uri
-import android.content.ClipboardManager
-import android.content.res.ColorStateList
-import android.graphics.Color
-import android.graphics.Typeface
-import android.graphics.drawable.GradientDrawable
-import android.graphics.drawable.StateListDrawable
 import android.os.Bundle
 import android.provider.OpenableColumns
 import android.os.Handler
@@ -24,9 +43,16 @@ import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.text.Editable
 import android.text.InputType
+import android.text.SpannableString
+import android.text.Spanned
+import android.text.TextUtils
 import android.text.TextWatcher
+import android.text.style.DynamicDrawableSpan
+import android.text.style.ImageSpan
 import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
+import android.view.animation.DecelerateInterpolator
 import android.webkit.MimeTypeMap
 import android.widget.*
 import com.yausername.ffmpeg.FFmpeg
@@ -39,25 +65,312 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
 
-private val C_TOP = Color.parseColor("#071A5C")
-private val C_BOTTOM = Color.parseColor("#0E45C8")
-private val C_PRIMARY = Color.parseColor("#1E6BFF")
-private val C_SOFT = Color.parseColor("#E4ECFF")
-private val C_DANGER = Color.parseColor("#E5484D")
-private val C_TEXT = Color.parseColor("#14213D")
-private val C_MUTED = Color.parseColor("#6B7A99")
-private val C_FIELD = Color.parseColor("#F0F4FF")
-private val C_SUB = Color.parseColor("#BFD2FF")
-private val C_OK = Color.parseColor("#1F9D55")
-private val C_WARN = Color.parseColor("#B86E00")
-private val C_GLASS = Color.argb(38, 255, 255, 255)
-private const val PRIMARY = 0
-private const val SOFT = 1
+// ---------- design system ----------
+/**
+ * Color tokens for one theme. `accent` is for text, icons and progress; `fill` is the background of
+ * filled buttons (it keeps white text readable in both themes). ok / warn / danger are the status tones.
+ */
+private class Palette(
+    val dark: Boolean,
+    val bg: Int, val surface: Int, val surface2: Int, val outline: Int, val outlineStrong: Int,
+    val text: Int, val muted: Int, val subtle: Int,
+    val accent: Int, val fill: Int, val accentSoft: Int, val onAccentSoft: Int,
+    val ok: Int, val warn: Int, val danger: Int, val dangerSoft: Int,
+    val ripple: Int, val disabledBg: Int, val disabledFg: Int,
+)
+
+private fun hex(h: String) = Color.parseColor(h)
+
+private val LIGHT = Palette(
+    dark = false,
+    bg = hex("#F4F6FA"), surface = hex("#FFFFFF"), surface2 = hex("#EEF1F7"), outline = hex("#E3E7EF"),
+    outlineStrong = hex("#C3CAD7"),
+    text = hex("#0E1726"), muted = hex("#5B6679"), subtle = hex("#8C96A8"),
+    accent = hex("#3461FF"), fill = hex("#3461FF"), accentSoft = hex("#E8EEFF"), onAccentSoft = hex("#2347D1"),
+    ok = hex("#0F7F3F"), warn = hex("#B45309"), danger = hex("#D92D20"), dangerSoft = hex("#FDECEA"),
+    ripple = Color.argb(31, 14, 23, 38), disabledBg = hex("#E9ECF2"), disabledFg = hex("#A3ABB9"),
+)
+
+private val DARK = Palette(
+    dark = true,
+    bg = hex("#0B0E14"), surface = hex("#151A23"), surface2 = hex("#1D2330"), outline = hex("#252C3A"),
+    outlineStrong = hex("#3A4354"),
+    text = hex("#E8ECF3"), muted = hex("#9AA4B5"), subtle = hex("#6B7588"),
+    accent = hex("#7B98FF"), fill = hex("#3D63F5"), accentSoft = hex("#1E2747"), onAccentSoft = hex("#B3C3FF"),
+    ok = hex("#3DD68C"), warn = hex("#F5B544"), danger = hex("#FF6B6B"), dangerSoft = hex("#3A1D22"),
+    ripple = Color.argb(41, 255, 255, 255), disabledBg = hex("#232A36"), disabledFg = hex("#5E687A"),
+)
+
+// spacing scale (dp)
+private const val S1 = 4
+private const val S2 = 8
+private const val S3 = 12
+private const val S4 = 16
+private const val S5 = 20
+// corner radii (dp)
+private const val R_SM = 10
+private const val R_MD = 14
+private const val R_LG = 20
+private const val R_PILL = 100
+// type scale (sp)
+private const val T_DISPLAY = 21f
+private const val T_TITLE = 16f
+private const val T_BODY = 14f
+private const val T_LABEL = 13f
+private const val T_CAPTION = 12f
+private const val T_OVERLINE = 11f
+
+private val MEDIUM: Typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+private val BOLD: Typeface = Typeface.create("sans-serif", Typeface.BOLD)
+
+// button kinds
+private const val FILLED = 0
+private const val TONAL = 1
 private const val DANGER = 2
+private const val GHOST = 3
+
+// status tones (stored per item, so a theme change can re-color them)
+private const val K_MUTED = 0
+private const val K_ACTIVE = 1
+private const val K_WARN = 2
+private const val K_ERROR = 3
+private const val K_OK = 4
+
 // Marks our own progress lines (see --progress-template in buildRequest).
 private const val PROG = "VGP|"
 // Start of optimize()'s answer for audio and other non-video files (expected, not an error).
 private const val NOT_VIDEO = "Not a video file"
+
+// ---------- icons ----------
+private const val G_PLAY = 1
+private const val G_PAUSE = 2
+private const val G_STOP = 3
+private const val G_SHARE = 4
+private const val G_OPEN = 5
+private const val G_PASTE = 6
+private const val G_CLOSE = 7
+private const val G_FOLDER = 8
+private const val G_WIFI = 9
+private const val G_SPARK = 10
+private const val G_DOWNLOAD = 11
+private const val G_MORE = 12
+private const val G_TRASH = 13
+private const val G_CHECK = 14
+private const val G_DONE_ALL = 15
+private const val G_REFRESH = 16
+private const val G_PHONE = 17
+private const val G_ALERT = 18
+private const val G_INFO = 19
+private const val G_CHEVRON_DOWN = 20
+private const val G_CHEVRON_RIGHT = 21
+private const val G_CLEAR_ALL = 22
+private const val G_VIDEO = 23
+
+/**
+ * Simple line icons drawn on a 24x24 grid, scaled to the bounds. They need no resources, stay sharp
+ * at any size and follow tint lists, so buttons grey them out when disabled.
+ */
+private class Glyph(private val kind: Int, private val base: Int, private val sz: Int = -1,
+                    private val weight: Float = 2f) : Drawable() {
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
+    private val path = Path()
+    private val r = RectF()
+    private var tint: ColorStateList? = null
+    private var alphaV = 255
+
+    override fun getIntrinsicWidth() = sz
+    override fun getIntrinsicHeight() = sz
+
+    override fun draw(cv: Canvas) {
+        val b = bounds
+        val s = minOf(b.width(), b.height()) / 24f
+        if (s <= 0f) return
+        val col = tint?.getColorForState(state, base) ?: base
+        p.color = col
+        p.alpha = Color.alpha(col) * alphaV / 255
+        p.strokeWidth = weight
+        p.style = Paint.Style.STROKE
+        path.reset()
+        cv.save()
+        cv.translate(b.left + (b.width() - 24 * s) / 2f, b.top + (b.height() - 24 * s) / 2f)
+        cv.scale(s, s)
+        when (kind) {
+            G_PLAY -> {
+                p.style = Paint.Style.FILL_AND_STROKE
+                path.moveTo(8f, 5.5f); path.lineTo(18.5f, 12f); path.lineTo(8f, 18.5f); path.close()
+                cv.drawPath(path, p)
+            }
+            G_PAUSE -> {
+                p.style = Paint.Style.FILL
+                r.set(6.5f, 5f, 10.2f, 19f); cv.drawRoundRect(r, 1.4f, 1.4f, p)
+                r.set(13.8f, 5f, 17.5f, 19f); cv.drawRoundRect(r, 1.4f, 1.4f, p)
+            }
+            G_STOP -> {
+                p.style = Paint.Style.FILL
+                r.set(6.5f, 6.5f, 17.5f, 17.5f); cv.drawRoundRect(r, 2.2f, 2.2f, p)
+            }
+            G_SHARE -> {
+                cv.drawLine(8.6f, 10.8f, 15.4f, 6.7f, p)
+                cv.drawLine(8.6f, 13.2f, 15.4f, 17.3f, p)
+                p.style = Paint.Style.FILL
+                cv.drawCircle(17.5f, 5.5f, 2.7f, p)
+                cv.drawCircle(6.5f, 12f, 2.7f, p)
+                cv.drawCircle(17.5f, 18.5f, 2.7f, p)
+            }
+            G_OPEN -> {
+                path.moveTo(11f, 5f); path.lineTo(7f, 5f); path.quadTo(5f, 5f, 5f, 7f)
+                path.lineTo(5f, 17f); path.quadTo(5f, 19f, 7f, 19f); path.lineTo(17f, 19f)
+                path.quadTo(19f, 19f, 19f, 17f); path.lineTo(19f, 13f)
+                path.moveTo(14f, 5f); path.lineTo(19f, 5f); path.lineTo(19f, 10f)
+                path.moveTo(19f, 5f); path.lineTo(11.5f, 12.5f)
+                cv.drawPath(path, p)
+            }
+            G_PASTE -> {
+                r.set(5.5f, 5f, 18.5f, 21f); cv.drawRoundRect(r, 2.5f, 2.5f, p)
+                r.set(9f, 3f, 15f, 7f); cv.drawRoundRect(r, 1.5f, 1.5f, p)
+                cv.drawLine(9f, 12f, 15f, 12f, p)
+                cv.drawLine(9f, 16f, 13f, 16f, p)
+            }
+            G_CLOSE -> {
+                cv.drawLine(7f, 7f, 17f, 17f, p)
+                cv.drawLine(17f, 7f, 7f, 17f, p)
+            }
+            G_FOLDER -> {
+                path.moveTo(3.5f, 7f); path.lineTo(3.5f, 17.5f); path.quadTo(3.5f, 19f, 5f, 19f)
+                path.lineTo(19f, 19f); path.quadTo(20.5f, 19f, 20.5f, 17.5f); path.lineTo(20.5f, 9.5f)
+                path.quadTo(20.5f, 8f, 19f, 8f); path.lineTo(12f, 8f); path.lineTo(10f, 5.5f)
+                path.lineTo(5f, 5.5f); path.quadTo(3.5f, 5.5f, 3.5f, 7f); path.close()
+                cv.drawPath(path, p)
+            }
+            G_WIFI -> {
+                r.set(12f - 13f, 19f - 13f, 12f + 13f, 19f + 13f); cv.drawArc(r, 225f, 90f, false, p)
+                r.set(12f - 8.6f, 19f - 8.6f, 12f + 8.6f, 19f + 8.6f); cv.drawArc(r, 225f, 90f, false, p)
+                r.set(12f - 4.3f, 19f - 4.3f, 12f + 4.3f, 19f + 4.3f); cv.drawArc(r, 225f, 90f, false, p)
+                p.style = Paint.Style.FILL
+                cv.drawCircle(12f, 19f, 1.5f, p)
+            }
+            G_SPARK -> {
+                p.style = Paint.Style.FILL
+                path.moveTo(12f, 2.5f); path.quadTo(12.9f, 11.1f, 21.5f, 12f)
+                path.quadTo(12.9f, 12.9f, 12f, 21.5f); path.quadTo(11.1f, 12.9f, 2.5f, 12f)
+                path.quadTo(11.1f, 11.1f, 12f, 2.5f); path.close()
+                cv.drawPath(path, p)
+            }
+            G_DOWNLOAD -> {
+                cv.drawLine(12f, 4f, 12f, 15f, p)
+                path.moveTo(7f, 10.5f); path.lineTo(12f, 15.5f); path.lineTo(17f, 10.5f)
+                cv.drawPath(path, p)
+                cv.drawLine(5f, 19.5f, 19f, 19.5f, p)
+            }
+            G_MORE -> {
+                p.style = Paint.Style.FILL
+                cv.drawCircle(5.5f, 12f, 1.9f, p)
+                cv.drawCircle(12f, 12f, 1.9f, p)
+                cv.drawCircle(18.5f, 12f, 1.9f, p)
+            }
+            G_TRASH -> {
+                cv.drawLine(4.5f, 6.5f, 19.5f, 6.5f, p)
+                path.moveTo(9.5f, 6.5f); path.lineTo(9.5f, 4.5f); path.lineTo(14.5f, 4.5f); path.lineTo(14.5f, 6.5f)
+                path.moveTo(6.5f, 6.5f); path.lineTo(7.5f, 19f); path.quadTo(7.6f, 20f, 8.6f, 20f)
+                path.lineTo(15.4f, 20f); path.quadTo(16.4f, 20f, 16.5f, 19f); path.lineTo(17.5f, 6.5f)
+                cv.drawPath(path, p)
+                cv.drawLine(10.2f, 10.5f, 10.2f, 16f, p)
+                cv.drawLine(13.8f, 10.5f, 13.8f, 16f, p)
+            }
+            G_CHECK -> {
+                path.moveTo(5f, 12.5f); path.lineTo(10f, 17.5f); path.lineTo(19f, 7f)
+                cv.drawPath(path, p)
+            }
+            G_DONE_ALL -> {
+                path.moveTo(2.5f, 12.5f); path.lineTo(7f, 17f); path.lineTo(15f, 8f)
+                path.moveTo(11.5f, 16f); path.lineTo(12.5f, 17f); path.lineTo(21.5f, 7f)
+                cv.drawPath(path, p)
+            }
+            G_REFRESH -> {
+                r.set(5f, 5f, 19f, 19f); cv.drawArc(r, 40f, 280f, false, p)
+                path.moveTo(18.5f, 3.5f); path.lineTo(18.5f, 8f); path.lineTo(14f, 8f)
+                cv.drawPath(path, p)
+            }
+            G_PHONE -> {
+                r.set(7f, 2.5f, 17f, 21.5f); cv.drawRoundRect(r, 2.5f, 2.5f, p)
+                cv.drawLine(10.5f, 18.5f, 13.5f, 18.5f, p)
+            }
+            G_ALERT -> {
+                cv.drawCircle(12f, 12f, 9f, p)
+                cv.drawLine(12f, 7.5f, 12f, 12.8f, p)
+                p.style = Paint.Style.FILL
+                cv.drawCircle(12f, 16.3f, 1.3f, p)
+            }
+            G_INFO -> {
+                cv.drawCircle(12f, 12f, 9f, p)
+                cv.drawLine(12f, 11f, 12f, 16.5f, p)
+                p.style = Paint.Style.FILL
+                cv.drawCircle(12f, 7.7f, 1.3f, p)
+            }
+            G_CHEVRON_DOWN -> {
+                path.moveTo(7f, 10f); path.lineTo(12f, 15f); path.lineTo(17f, 10f)
+                cv.drawPath(path, p)
+            }
+            G_CHEVRON_RIGHT -> {
+                path.moveTo(10f, 7f); path.lineTo(15f, 12f); path.lineTo(10f, 17f)
+                cv.drawPath(path, p)
+            }
+            G_CLEAR_ALL -> {
+                cv.drawLine(4f, 7f, 20f, 7f, p)
+                cv.drawLine(4f, 12f, 12f, 12f, p)
+                cv.drawLine(4f, 17f, 9.5f, 17f, p)
+                cv.drawLine(14.5f, 13.5f, 20f, 19f, p)
+                cv.drawLine(20f, 13.5f, 14.5f, 19f, p)
+            }
+            G_VIDEO -> {
+                r.set(3f, 5.5f, 21f, 18.5f); cv.drawRoundRect(r, 3f, 3f, p)
+                p.style = Paint.Style.FILL_AND_STROKE
+                p.strokeWidth = weight * 0.6f
+                path.moveTo(10f, 9f); path.lineTo(15.2f, 12f); path.lineTo(10f, 15f); path.close()
+                cv.drawPath(path, p)
+            }
+        }
+        cv.restore()
+    }
+
+    override fun setAlpha(a: Int) { alphaV = a; invalidateSelf() }
+    override fun setColorFilter(f: ColorFilter?) { p.colorFilter = f; invalidateSelf() }
+    @Deprecated("Deprecated in Java")
+    override fun getOpacity() = PixelFormat.TRANSLUCENT
+    override fun setTintList(t: ColorStateList?) { tint = t; invalidateSelf() }
+    override fun isStateful() = tint?.isStateful == true
+    override fun onStateChange(s: IntArray): Boolean {
+        val stateful = tint?.isStateful == true
+        if (stateful) invalidateSelf()
+        return stateful
+    }
+}
+
+/**
+ * A progress bar that glides to each new value instead of jumping. Going backwards (stop / restart)
+ * is instant, and so is any change while the bar is not on screen.
+ */
+private class SmoothBar(ctx: Context) : ProgressBar(ctx, null, android.R.attr.progressBarStyleHorizontal) {
+    private var anim: ValueAnimator? = null
+
+    private fun raw(v: Int) = super.setProgress(v)
+
+    override fun setProgress(v: Int) {
+        anim?.cancel()
+        anim = null
+        val from = progress
+        if (v <= from || !isAttachedToWindow || !isShown) { raw(v); return }
+        val va = ValueAnimator.ofInt(from, v)
+        va.duration = 450
+        va.interpolator = DecelerateInterpolator()
+        va.addUpdateListener { raw(it.animatedValue as Int) }
+        anim = va
+        va.start()
+    }
+}
 
 class MainActivity : Activity() {
     // choices: height in pixels, 0 = best available, -1 = audio only (MP3)
@@ -71,7 +384,9 @@ class MainActivity : Activity() {
         lateinit var state: TextView
         lateinit var box: LinearLayout
         lateinit var toggle: Button
-        lateinit var stopBtn: Button
+        lateinit var stopBtn: ImageButton
+        lateinit var doneBadge: View
+        var tone = 0                      // status tone (K_*), so a theme change can re-color the line
         @Volatile var busy = false
         @Volatile var cancelled = false
         @Volatile var paused = false
@@ -96,15 +411,20 @@ class MainActivity : Activity() {
     }
 
     private lateinit var input: EditText
-    private lateinit var folderBtn: Button
+    private lateinit var clearBtn: Button
+    private lateinit var folderLabel: TextView
     private lateinit var list: LinearLayout
     private lateinit var status: TextView
+    private lateinit var engineChip: TextView
     private lateinit var dlBtn: Button
     private lateinit var selectAll: CheckBox
-    private lateinit var countLabel: TextView
-    private lateinit var empty: TextView
+    private lateinit var countBadge: TextView
+    private lateinit var empty: View
+    private lateinit var topBar: LinearLayout
+    private lateinit var scroll: ScrollView
     private lateinit var prefs: SharedPreferences
     @Volatile private var updating = false
+    @Volatile private var engineFailed = false                    // the engine could not start
     @Volatile private var checkErr = ""                           // details of the last failed link check
     private var syncing = false                                   // updating "Select all" from code
     private val imgPool = Executors.newFixedThreadPool(2)         // thumbnails
@@ -161,243 +481,593 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun px(v: Int) = (v * dp).toInt()
+    // ---------- design helpers ----------
+    @Volatile private var pal = LIGHT
+    // Status tones; the download code passes these to setState() / ui().
+    private val C_MUTED: Int get() = pal.muted
+    private val C_PRIMARY: Int get() = pal.accent
+    private val C_OK: Int get() = pal.ok
+    private val C_WARN: Int get() = pal.warn
+    private val C_DANGER: Int get() = pal.danger
+    private val MATCH = LinearLayout.LayoutParams.MATCH_PARENT
+    private val WRAP = LinearLayout.LayoutParams.WRAP_CONTENT
 
-    private fun bg(color: Int, r: Int) = GradientDrawable().apply {
+    private fun px(v: Int) = (v * dp).toInt()
+    private fun pxf(v: Float) = v * dp
+
+    private fun isNight(c: Configuration = resources.configuration) =
+        (c.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+
+    private fun themeRes() = if (pal.dark) android.R.style.Theme_DeviceDefault_NoActionBar
+        else android.R.style.Theme_DeviceDefault_Light_NoActionBar
+
+    private fun dialogTheme() = if (pal.dark) android.R.style.Theme_DeviceDefault_Dialog_Alert
+        else android.R.style.Theme_DeviceDefault_Light_Dialog_Alert
+
+    /** The color with its alpha multiplied by f. */
+    private fun fade(c: Int, f: Float) =
+        Color.argb((Color.alpha(c) * f).toInt(), Color.red(c), Color.green(c), Color.blue(c))
+
+    private fun rounded(color: Int, r: Int, stroke: Int = 0, strokeDp: Float = 1f) = GradientDrawable().apply {
         setColor(color)
         cornerRadius = px(r).toFloat()
+        if (stroke != 0) setStroke(maxOf(1, pxf(strokeDp).toInt()), stroke)
     }
 
-    private fun darker(c: Int): Int {
-        val hsv = FloatArray(3)
-        Color.colorToHSV(c, hsv)
-        hsv[2] *= 0.85f
-        return Color.HSVToColor(hsv)
+    private fun oval(color: Int) = GradientDrawable().apply {
+        shape = GradientDrawable.OVAL
+        setColor(color)
     }
 
-    /** Colors a button as PRIMARY (filled blue), SOFT (light blue) or DANGER (red). */
-    private fun style(b: Button, kind: Int) {
-        val fill = when (kind) { PRIMARY -> C_PRIMARY; DANGER -> C_DANGER; else -> C_SOFT }
-        val fg = if (kind == SOFT) C_PRIMARY else Color.WHITE
-        b.background = StateListDrawable().apply {
-            addState(intArrayOf(-android.R.attr.state_enabled), bg(Color.parseColor("#DDE3F0"), 12))
-            addState(intArrayOf(android.R.attr.state_pressed), bg(darker(fill), 12))
-            addState(intArrayOf(), bg(fill, 12))
+    private fun dot(color: Int, size: Int): Drawable = oval(color).apply { setBounds(0, 0, px(size), px(size)) }
+
+    /** Press feedback. Without a mask the ripple follows the content's (rounded) shape. */
+    private fun ripple(content: Drawable?, mask: Drawable? = null, onFill: Boolean = false) =
+        RippleDrawable(ColorStateList.valueOf(if (onFill) Color.argb(56, 255, 255, 255) else pal.ripple), content, mask)
+
+    private fun lp(w: Int, h: Int, weight: Float = 0f) = LinearLayout.LayoutParams(w, h, weight)
+
+    private fun add(parent: LinearLayout, v: View, top: Int = 0, bottom: Int = 0) = parent.addView(v,
+        lp(MATCH, WRAP).apply { setMargins(0, px(top), 0, px(bottom)) })
+
+    private fun hrow() = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+    }
+
+    private fun label(t: String, size: Float, color: Int, face: Typeface = Typeface.DEFAULT) = TextView(this).apply {
+        text = t
+        textSize = size
+        setTextColor(color)
+        typeface = face
+    }
+
+    /** Small uppercase heading above a block. */
+    private fun overline(t: String) = label(t.uppercase(), T_OVERLINE, pal.subtle, MEDIUM).apply {
+        letterSpacing = 0.12f
+        setPadding(px(S1), px(S5 + S1), px(S1), px(S2))
+    }
+
+    /** A rounded square (or circle) holding an icon. */
+    private fun tile(icon: Int, fg: Int, bgc: Int, size: Int = 36, r: Int = R_SM) = ImageView(this).apply {
+        background = rounded(bgc, r)
+        scaleType = ImageView.ScaleType.CENTER
+        setImageDrawable(Glyph(icon, fg, px(size / 2 + 2)))
+    }
+
+    private fun card() = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        background = rounded(pal.surface, R_LG, pal.outline)
+        elevation = if (pal.dark) 0f else pxf(1.5f)
+        setPadding(px(S4), px(S4), px(S4), px(S4))
+    }
+
+    private fun kindColors(kind: Int): Pair<Int, Int> = when (kind) {
+        FILLED -> pal.fill to Color.WHITE
+        DANGER -> pal.dangerSoft to pal.danger
+        GHOST -> Color.TRANSPARENT to pal.muted
+        else -> pal.accentSoft to pal.onAccentSoft
+    }
+
+    private fun fgList(fg: Int) = ColorStateList(
+        arrayOf(intArrayOf(-android.R.attr.state_enabled), intArrayOf()), intArrayOf(pal.disabledFg, fg))
+
+    /** Colors a pill button: FILLED (accent), TONAL (soft accent), DANGER (soft red) or GHOST (text only). */
+    private fun style(b: TextView, kind: Int) {
+        val (fill, fg) = kindColors(kind)
+        val content = StateListDrawable().apply {
+            addState(intArrayOf(-android.R.attr.state_enabled),
+                rounded(if (kind == GHOST) Color.TRANSPARENT else pal.disabledBg, R_PILL))
+            addState(intArrayOf(), rounded(fill, R_PILL))
         }
-        b.setTextColor(ColorStateList(
-            arrayOf(intArrayOf(-android.R.attr.state_enabled), intArrayOf()),
-            intArrayOf(Color.parseColor("#8C96AB"), fg)))
+        b.background = if (kind == GHOST) ripple(content, rounded(Color.WHITE, R_PILL))
+            else ripple(content, null, kind == FILLED)
+        val l = fgList(fg)
+        b.setTextColor(l)
+        b.compoundDrawableTintList = l
     }
 
-    private fun btn(text: String, kind: Int = SOFT, onClick: () -> Unit): Button {
+    /** A leading icon on a wrap-content button (0 = none). */
+    private fun setIcon(b: TextView, icon: Int, size: Int = 18) {
+        if (icon == 0) { b.setCompoundDrawablesRelative(null, null, null, null); return }
+        val d = Glyph(icon, b.currentTextColor)
+        d.setBounds(0, 0, px(size), px(size))
+        b.setCompoundDrawablesRelative(d, null, null, null)
+        b.compoundDrawablePadding = px(6)
+    }
+
+    /** Button text with an icon that stays next to the text, even in a wide button. */
+    private fun iconText(icon: Int, text: String, color: Int): CharSequence {
+        val d = Glyph(icon, color)
+        d.setBounds(0, 0, px(20), px(20))
+        val s = SpannableString("   $text")
+        s.setSpan(ImageSpan(d, DynamicDrawableSpan.ALIGN_CENTER), 0, 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        return s
+    }
+
+    private fun btn(text: String, kind: Int = TONAL, icon: Int = 0, h: Int = 44, onClick: () -> Unit): Button {
         val b = Button(this)
         b.text = text
         b.isAllCaps = false
-        b.textSize = 15f
-        b.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        b.textSize = T_BODY
+        b.typeface = MEDIUM
         b.stateListAnimator = null
-        b.minHeight = px(44)
-        b.minimumHeight = px(44)
+        b.minHeight = px(h)
+        b.minimumHeight = px(h)
+        b.minWidth = 0
+        b.minimumWidth = 0
+        b.gravity = Gravity.CENTER
+        b.setPadding(px(if (icon != 0) 14 else 18), 0, px(18), 0)
+        setIcon(b, icon)
         style(b, kind)
         b.setOnClickListener { onClick() }
         return b
     }
 
-    /** Small light heading above a block on the blue background. */
-    private fun section(text: String) = TextView(this).apply {
-        this.text = text
-        textSize = 13f
-        letterSpacing = 0.06f
-        typeface = Typeface.DEFAULT_BOLD
-        setTextColor(C_SUB)
-        setPadding(px(6), px(12), px(6), 0)
+    /** A round icon-only button; long-press shows its name. */
+    private fun styleRound(b: ImageButton, icon: Int, name: String, kind: Int) {
+        val (fill, fg) = kindColors(kind)
+        b.setImageDrawable(Glyph(icon, fg, px(18)))
+        b.imageTintList = fgList(fg)
+        b.background = ripple(StateListDrawable().apply {
+            addState(intArrayOf(-android.R.attr.state_enabled), oval(pal.disabledBg))
+            addState(intArrayOf(), oval(fill))
+        }, null, kind == FILLED)
+        b.contentDescription = name
+        b.tooltipText = name
     }
 
-    /** A settings row: bold title, muted explanation, switch on the right. */
-    private fun toggleRow(title: String, sub: String, on: Boolean, changed: (Boolean) -> Unit) =
-        Switch(this).apply {
-            val x = android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
-            val sb = android.text.SpannableStringBuilder(title)
-            sb.setSpan(android.text.style.StyleSpan(Typeface.BOLD), 0, title.length, x)
-            sb.append("\n")
-            val st = sb.length
-            sb.append(sub)
-            sb.setSpan(android.text.style.ForegroundColorSpan(C_MUTED), st, sb.length, x)
-            sb.setSpan(android.text.style.RelativeSizeSpan(0.85f), st, sb.length, x)
-            text = sb
-            textSize = 15f
-            setTextColor(C_TEXT)
-            setPadding(0, px(6), 0, px(6))
-            thumbTintList = ColorStateList(
-                arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
-                intArrayOf(C_PRIMARY, Color.parseColor("#F4F6FB")))
-            trackTintList = ColorStateList(
-                arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
-                intArrayOf(Color.parseColor("#9DBBFF"), Color.parseColor("#C5CCDB")))
-            isChecked = on
-            setOnCheckedChangeListener { _, c -> changed(c) }
+    /** Round tick box. `overlay` is the variant that sits on a thumbnail (white ring, dark fill). */
+    private fun tickBox(overlay: Boolean): Drawable {
+        val size = px(22)
+        val onBg = oval(pal.fill).apply {
+            setSize(size, size)
+            if (overlay) setStroke(px(2), Color.WHITE)
         }
+        val on = LayerDrawable(arrayOf<Drawable>(onBg, Glyph(G_CHECK, Color.WHITE, px(14), 2.8f)))
+        on.setLayerGravity(1, Gravity.CENTER)
+        val off = oval(if (overlay) Color.argb(90, 0, 0, 0) else Color.TRANSPARENT).apply {
+            setSize(size, size)
+            setStroke(px(2), if (overlay) Color.WHITE else pal.outlineStrong)
+        }
+        return StateListDrawable().apply {
+            setEnterFadeDuration(120)
+            setExitFadeDuration(120)
+            addState(intArrayOf(android.R.attr.state_checked), on)
+            addState(intArrayOf(), off)
+        }
+    }
 
-    /** A thicker, rounded progress bar. */
-    private fun bar() = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
-        max = 100
-        val front = android.graphics.drawable.ClipDrawable(bg(C_PRIMARY, 4), Gravity.START,
-            android.graphics.drawable.ClipDrawable.HORIZONTAL)
-        progressDrawable = android.graphics.drawable.LayerDrawable(
-            arrayOf<android.graphics.drawable.Drawable>(bg(C_SOFT, 4), front)).apply {
+    private fun checkBox(overlay: Boolean = false) = CheckBox(this).apply {
+        setButtonDrawable(tickBox(overlay))
+        minWidth = 0
+        minimumWidth = 0
+        minHeight = 0
+        minimumHeight = 0
+        if (overlay) {
+            background = null
+            setPadding(0, 0, 0, 0)
+        }
+    }
+
+    private fun switchOf(on: Boolean, changed: (Boolean) -> Unit) = Switch(this).apply {
+        thumbTintList = ColorStateList(arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+            intArrayOf(Color.WHITE, if (pal.dark) hex("#9AA3B2") else Color.WHITE))
+        trackTintList = ColorStateList(arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+            intArrayOf(pal.fill, pal.outlineStrong))
+        isChecked = on
+        setOnCheckedChangeListener { _, c -> changed(c) }
+    }
+
+    /** A settings row: icon tile, title, muted explanation, and an optional control on the right. */
+    private fun settingRow(icon: Int, title: String, sub: TextView, end: View?): LinearLayout {
+        val r = hrow()
+        r.setPadding(px(S3), px(S3), px(S3), px(S3))
+        r.addView(tile(icon, pal.accent, pal.accentSoft), lp(px(36), px(36)))
+        val t = LinearLayout(this)
+        t.orientation = LinearLayout.VERTICAL
+        t.setPadding(px(S3), 0, px(S2), 0)
+        t.addView(label(title, T_BODY + 1, pal.text, MEDIUM))
+        t.addView(sub)
+        r.addView(t, lp(0, WRAP, 1f))
+        if (end != null) r.addView(end, lp(WRAP, WRAP))
+        r.background = ripple(null, rounded(Color.WHITE, R_MD))
+        return r
+    }
+
+    private fun subText(t: String) = label(t, T_CAPTION, pal.muted).apply { setPadding(0, px(2), 0, 0) }
+
+    private fun addDivider(parent: LinearLayout, inset: Int) = parent.addView(
+        View(this).apply { setBackgroundColor(pal.outline) },
+        lp(MATCH, 1).apply { marginStart = px(inset); marginEnd = px(S3) })
+
+    /** A slim rounded progress bar that animates to each new value. */
+    private fun barDrawable(): Drawable {
+        val front = ClipDrawable(rounded(pal.accent, 3), Gravity.START, ClipDrawable.HORIZONTAL)
+        return LayerDrawable(arrayOf<Drawable>(rounded(if (pal.dark) pal.outline else pal.surface2, 3), front)).apply {
             setId(0, android.R.id.background)
             setId(1, android.R.id.progress)
         }
     }
 
-    private fun row(vararg views: View, weights: FloatArray? = null) = LinearLayout(this).apply {
-        orientation = LinearLayout.HORIZONTAL
-        for ((k, v) in views.withIndex()) addView(v, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT,
-            weights?.getOrNull(k) ?: 1f).apply { setMargins(px(3), 0, px(3), 0) })
+    /** New cards fade and slide in; removed ones fade out. */
+    private fun cardMotion() = LayoutTransition().apply {
+        setAnimator(LayoutTransition.APPEARING, ObjectAnimator.ofPropertyValuesHolder(null as Any?,
+            PropertyValuesHolder.ofFloat("alpha", 0f, 1f), PropertyValuesHolder.ofFloat("translationY", pxf(24f), 0f)))
+        setInterpolator(LayoutTransition.APPEARING, DecelerateInterpolator(1.8f))
+        setDuration(LayoutTransition.APPEARING, 340)
+        setStartDelay(LayoutTransition.APPEARING, 60)
+        setDuration(LayoutTransition.DISAPPEARING, 200)
     }
 
-    private fun add(parent: LinearLayout, v: View, m: Int = 4) = parent.addView(v,
-        LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-            .apply { setMargins(0, px(m), 0, px(m)) })
-
-    private fun card() = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
-        background = bg(Color.WHITE, 18)
-        setPadding(px(14), px(10), px(14), px(10))
+    private fun toneColor(k: Int) = when (k) {
+        K_ACTIVE -> pal.accent
+        K_WARN -> pal.warn
+        K_ERROR -> pal.danger
+        K_OK -> pal.ok
+        else -> pal.muted
     }
 
-    override fun onCreate(s: Bundle?) {
-        super.onCreate(s)
-        dp = resources.displayMetrics.density
-        prefs = getSharedPreferences("vidgrab", MODE_PRIVATE)
-        window.statusBarColor = C_TOP
-        window.navigationBarColor = C_TOP
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(px(14), px(18), px(14), px(16))
-        }
+    private fun toneKey(c: Int) = when (c) {
+        C_PRIMARY -> K_ACTIVE
+        C_WARN -> K_WARN
+        C_DANGER -> K_ERROR
+        C_OK -> K_OK
+        else -> K_MUTED
+    }
 
-        // header with the app logo
-        val head = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
+    @Suppress("DEPRECATION")
+    private fun paintSystemBars() {
+        window.statusBarColor = pal.bg
+        window.navigationBarColor = pal.surface
+        val d = window.decorView
+        val light = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+        d.systemUiVisibility = if (pal.dark) d.systemUiVisibility and light.inv() else d.systemUiVisibility or light
+        d.setBackgroundColor(pal.bg)
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            val m = android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or
+                android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
+            window.insetsController?.setSystemBarsAppearance(if (pal.dark) 0 else m, m)
         }
-        head.addView(ImageView(this).apply { setImageResource(R.drawable.app_logo) },
-            LinearLayout.LayoutParams(px(52), px(52)))
-        val titles = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(px(12), 0, 0, 0)
+    }
+
+    /** Tints the status bubble by what its message says: error, waiting, success or in progress. */
+    private fun paintStatus() {
+        val s = status.text.toString().lowercase()
+        fun has(vararg k: String) = k.any { it in s }
+        val tone = when {
+            has("copied", "up to date") -> K_OK
+            has("could not", "failed", "for details", "error") -> K_ERROR
+            has("waiting", "already", "tick ", "no link", "first", "still starting", "no internet", "no app") -> K_WARN
+            has("ready", "done", "updated", "optimized", "deleted", "removed", "cleared") -> K_OK
+            else -> K_ACTIVE
         }
-        titles.addView(TextView(this).apply {
-            text = "VidGrab"; textSize = 26f; setTextColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD
+        val c = toneColor(tone)
+        status.background = rounded(fade(c, if (pal.dark) 0.14f else 0.08f), R_MD, fade(c, 0.25f))
+        val icon = Glyph(when (tone) { K_ERROR -> G_ALERT; K_OK -> G_CHECK; else -> G_INFO }, c, -1,
+            if (tone == K_OK) 2.4f else 2f)
+        icon.setBounds(0, 0, px(20), px(20))
+        var end: Drawable? = null
+        if (checkErr.isNotEmpty() && "details" in s) {
+            end = Glyph(G_CHEVRON_RIGHT, c)
+            end.setBounds(0, 0, px(18), px(18))
+        }
+        status.setCompoundDrawablesRelative(icon, null, end, null)
+    }
+
+    /** The small engine chip in the top bar: Starting, Updating, Ready or Engine error. */
+    private fun refreshChip() {
+        val (txt, tone) = when {
+            engineFailed -> "Engine error" to K_ERROR
+            updating -> "Updating" to K_ACTIVE
+            ready -> "Ready" to K_OK
+            else -> "Starting" to K_WARN
+        }
+        val c = toneColor(tone)
+        engineChip.text = txt
+        engineChip.setTextColor(c)
+        engineChip.background = rounded(fade(c, if (pal.dark) 0.16f else 0.1f), R_PILL)
+        engineChip.setCompoundDrawablesRelative(dot(c, 7), null, null, null)
+    }
+
+    /** Builds the whole screen in the current palette: at start, and again when the system theme changes. */
+    private fun buildUi() {
+        // top bar (fixed): logo, name, tagline and the engine chip
+        topBar = hrow()
+        topBar.setPadding(px(S5), px(S3), px(S4), px(S3))
+        topBar.background = ColorDrawable(pal.bg)
+        val logo = ImageView(this).apply {
+            setImageResource(R.drawable.app_logo)
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            background = rounded(pal.surface, R_SM + 2)
+            clipToOutline = true
+        }
+        topBar.addView(logo, lp(px(40), px(40)))
+        val names = LinearLayout(this)
+        names.orientation = LinearLayout.VERTICAL
+        names.setPadding(px(S3), 0, px(S2), 0)
+        names.addView(label("VidGrab", T_DISPLAY, pal.text, BOLD))
+        names.addView(label("Download videos & music from the web", T_CAPTION, pal.muted).apply {
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
         })
-        titles.addView(TextView(this).apply { text = "Download videos and music from the web"; textSize = 13f; setTextColor(C_SUB) })
-        head.addView(titles)
-        add(root, head)
+        topBar.addView(names, lp(0, WRAP, 1f))
+        engineChip = label("", T_CAPTION, pal.muted, MEDIUM).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(px(10), px(5), px(12), px(5))
+            compoundDrawablePadding = px(6)
+            setOnClickListener { if (!ready && checkErr.isNotEmpty()) showDetails("Details", checkErr) }
+        }
+        topBar.addView(engineChip, lp(WRAP, WRAP))
+        val topLine = View(this)
+        topLine.setBackgroundColor(pal.outline)
+        topLine.alpha = 0f
 
-        // status bubble (right under the header so it is always visible)
+        val root = LinearLayout(this)
+        root.orientation = LinearLayout.VERTICAL
+        root.setPadding(px(S4), px(S1), px(S4), px(S5 + S1))
+
+        // status bubble (right under the top bar); tap it for error details
         status = TextView(this).apply {
             text = "Starting engine..."
-            textSize = 14f
-            setTextColor(Color.WHITE)
-            background = bg(C_GLASS, 12)
-            setPadding(px(12), px(9), px(12), px(9))
+            textSize = T_LABEL + 0.5f
+            setTextColor(pal.text)
+            setLineSpacing(px(2).toFloat(), 1f)
+            gravity = Gravity.CENTER_VERTICAL
+            compoundDrawablePadding = px(10)
+            setPadding(px(14), px(12), px(14), px(12))
             setOnClickListener { if (checkErr.isNotEmpty()) showDetails("Details", checkErr) }
         }
-        add(root, status, 8)
+        status.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, st: Int, c: Int, a: Int) {}
+            override fun onTextChanged(s: CharSequence?, st: Int, b: Int, c: Int) {}
+            override fun afterTextChanged(e: Editable?) {
+                paintStatus()
+                refreshChip()
+                status.animate().cancel()
+                status.alpha = 0.55f
+                status.animate().alpha(1f).setDuration(200).start()
+            }
+        })
+        add(root, status, S2, S1)
 
-        // links card
-        add(root, section("ADD LINKS"), 0)
+        // links card: heading with the Paste action, the box, and a Clear action
         val links = card()
+        val linksHead = hrow()
+        val lt = LinearLayout(this)
+        lt.orientation = LinearLayout.VERTICAL
+        lt.addView(label("Add links", T_TITLE, pal.text, MEDIUM))
+        lt.addView(subText("Checked automatically as you paste"))
+        linksHead.addView(lt, lp(0, WRAP, 1f))
+        linksHead.addView(btn("Paste", FILLED, G_PASTE, 38) { pasteClipboard() }, lp(WRAP, px(38)))
+        add(links, linksHead)
         input = EditText(this).apply {
-            hint = "Paste links here, one per line.\nThey are checked automatically."
+            hint = "Paste links here, one per line"
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
             minLines = 3
-            gravity = Gravity.TOP
-            background = bg(C_FIELD, 12)
-            setPadding(px(12), px(10), px(12), px(10))
-            setTextColor(C_TEXT)
-            setHintTextColor(C_MUTED)
+            gravity = Gravity.TOP or Gravity.START
+            textSize = T_BODY
+            background = StateListDrawable().apply {
+                addState(intArrayOf(android.R.attr.state_focused), rounded(pal.surface2, R_MD, pal.accent, 1.5f))
+                addState(intArrayOf(), rounded(pal.surface2, R_MD, pal.outline))
+            }
+            setPadding(px(14), px(12), px(14), px(12))
+            setTextColor(pal.text)
+            setHintTextColor(pal.subtle)
+            highlightColor = fade(pal.accent, 0.3f)
         }
-        add(links, input)
+        input.setTextCursorDrawable(rounded(pal.accent, 1).apply { setSize(px(2), px(20)) })
+        add(links, input, S3)
+        val foot = hrow()
+        foot.addView(label("Tip: share a link to VidGrab from any app", T_CAPTION, pal.subtle), lp(0, WRAP, 1f))
+        clearBtn = btn("Clear", GHOST, G_CLOSE, 32) { input.setText("") }
+        clearBtn.textSize = T_LABEL
+        clearBtn.setPadding(px(10), 0, px(12), 0)
+        clearBtn.visibility = View.INVISIBLE
+        foot.addView(clearBtn, lp(WRAP, px(32)))
+        add(links, foot, S2)
         input.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, st: Int, c: Int, a: Int) {}
             override fun onTextChanged(s: CharSequence?, st: Int, b: Int, c: Int) {}
             override fun afterTextChanged(e: Editable?) {
+                clearBtn.visibility = if (e.isNullOrEmpty()) View.INVISIBLE else View.VISIBLE
                 handler.removeCallbacks(checkRun)
                 handler.postDelayed(checkRun, 600)
             }
         })
-        add(links, row(btn("Paste from clipboard", PRIMARY) { pasteClipboard() }, btn("Clear") { input.setText("") },
-            weights = floatArrayOf(2f, 1f)))
-        add(root, links, 6)
+        add(root, links, S3)
 
-        // settings card
-        add(root, section("SETTINGS"), 0)
+        // settings card: tidy rows, each one tappable as a whole
+        add(root, overline("Settings"))
         val settings = card()
-        folderBtn = btn("") { pickFolder() }
-        add(settings, folderBtn)
-        updateFolderLabel()
-        add(settings, toggleRow("Wi-Fi only", "Turn off to also download on mobile data", wifiOnly()) { c ->
+        settings.setPadding(px(S1), px(S1), px(S1), px(S1))
+        folderLabel = subText("").apply {
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.MIDDLE
+        }
+        val change = label("Change", T_LABEL, pal.accent, MEDIUM)
+        val chev = Glyph(G_CHEVRON_RIGHT, pal.accent)
+        chev.setBounds(0, 0, px(16), px(16))
+        change.setCompoundDrawablesRelative(null, null, chev, null)
+        change.compoundDrawablePadding = px(2)
+        val folderRow = settingRow(G_FOLDER, "Save to", folderLabel, change)
+        folderRow.setOnClickListener { pickFolder() }
+        add(settings, folderRow)
+        addDivider(settings, 60)
+        val wifi = switchOf(wifiOnly()) { c ->
             prefs.edit().putBoolean("wifiOnly", c).apply()
             // Turned on while on mobile data: pause running downloads until Wi-Fi is back.
             // Turned off: waiting downloads notice within a couple of seconds and continue.
             if (c && !canDownload()) restartRunning()
-        }, 2)
-        add(settings, toggleRow("Optimize after download", "Smoother playback and seeking. Turn off to optimize later",
-            prefs.getBoolean("optimize", true)) { c -> prefs.edit().putBoolean("optimize", c).apply() }, 2)
-        add(root, settings, 6)
-
-        // video list: heading with count + "Select all", empty-state hint, then one card per video
-        val listHead = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
         }
-        countLabel = section("YOUR VIDEOS")
-        listHead.addView(countLabel, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        selectAll = CheckBox(this).apply {
+        val wifiRow = settingRow(G_WIFI, "Wi-Fi only", subText("Turn off to also download on mobile data"), wifi)
+        wifiRow.setOnClickListener { wifi.toggle() }
+        add(settings, wifiRow)
+        addDivider(settings, 60)
+        val opt = switchOf(prefs.getBoolean("optimize", true)) { c -> prefs.edit().putBoolean("optimize", c).apply() }
+        val optRow = settingRow(G_SPARK, "Optimize after download",
+            subText("Smoother playback and seeking. Turn off to optimize later"), opt)
+        optRow.setOnClickListener { opt.toggle() }
+        add(settings, optRow)
+        add(root, settings)
+
+        // video list: heading with count + "Select all", empty state, then one card per video
+        val listHead = hrow()
+        listHead.setPadding(px(S1), px(S5 + S2), 0, px(S2))
+        listHead.addView(label("Your videos", T_TITLE + 1, pal.text, BOLD))
+        countBadge = label("", T_CAPTION, pal.onAccentSoft, MEDIUM).apply {
+            background = rounded(pal.accentSoft, R_PILL)
+            gravity = Gravity.CENTER
+            minWidth = px(24)
+            setPadding(px(8), px(2), px(8), px(2))
+        }
+        listHead.addView(countBadge, lp(WRAP, WRAP).apply { marginStart = px(S2) })
+        listHead.addView(View(this), lp(0, 1, 1f))
+        selectAll = checkBox().apply {
             text = "Select all"
-            setTextColor(Color.WHITE)
-            buttonTintList = ColorStateList.valueOf(Color.WHITE)
-            setPadding(0, px(12), 0, 0)
+            textSize = T_LABEL
+            typeface = MEDIUM
+            setTextColor(pal.muted)
+            setPadding(px(S2), px(6), px(S1), px(6))
             setOnCheckedChangeListener { _, c -> if (!syncing) items.forEach { it.check.isChecked = c } }
         }
-        listHead.addView(selectAll)
-        add(root, listHead, 0)
-        empty = TextView(this).apply {
-            text = "No videos yet.\nPaste a link above, or share one to VidGrab from any app."
-            gravity = Gravity.CENTER
-            textSize = 14f
-            setTextColor(C_SUB)
-            background = bg(C_GLASS, 18)
-            setPadding(px(16), px(22), px(16), px(22))
+        listHead.addView(selectAll, lp(WRAP, WRAP))
+        add(root, listHead)
+
+        val emptyBox = LinearLayout(this)
+        emptyBox.orientation = LinearLayout.VERTICAL
+        emptyBox.gravity = Gravity.CENTER_HORIZONTAL
+        emptyBox.background = GradientDrawable().apply {
+            cornerRadius = pxf(R_LG.toFloat())
+            setColor(fade(pal.surface, 0.55f))
+            setStroke(maxOf(2, pxf(1.5f).toInt()), pal.outlineStrong, pxf(6f), pxf(5f))
         }
-        add(root, empty, 6)
-        list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        add(root, list, 0)
+        emptyBox.setPadding(px(24), px(28), px(24), px(28))
+        emptyBox.addView(ImageView(this).apply {
+            background = oval(pal.accentSoft)
+            scaleType = ImageView.ScaleType.CENTER
+            setImageDrawable(Glyph(G_DOWNLOAD, pal.accent, px(26), 2.2f))
+        }, lp(px(56), px(56)))
+        emptyBox.addView(label("No videos yet", T_TITLE, pal.text, MEDIUM), lp(WRAP, WRAP).apply { topMargin = px(S3 + 2) })
+        emptyBox.addView(label("Paste a link above, or share one to VidGrab from any app.", T_LABEL, pal.muted).apply {
+            gravity = Gravity.CENTER
+            setLineSpacing(px(2).toFloat(), 1f)
+        }, lp(WRAP, WRAP).apply { topMargin = px(S1 + 2) })
+        emptyBox.addView(label("Paste  →  Pick quality  →  Download", T_CAPTION, pal.subtle, MEDIUM).apply {
+            background = rounded(pal.surface2, R_PILL)
+            setPadding(px(12), px(5), px(12), px(5))
+        }, lp(WRAP, WRAP).apply { topMargin = px(S4) })
+        empty = emptyBox
+        add(root, empty, S1)
+        list = LinearLayout(this)
+        list.orientation = LinearLayout.VERTICAL
+        add(root, list)
 
         // bottom bar: the main action is always in reach; everything else is under "More"
-        dlBtn = btn("Download", PRIMARY) { downloadSelected() }
-        val more = btn("More") {}
-        more.setOnClickListener { showMenu(more) }
-        val bottom = row(dlBtn, more, weights = floatArrayOf(2f, 1f)).apply {
-            setBackgroundColor(C_TOP)
-            setPadding(px(11), px(10), px(11), px(10))
-        }
+        dlBtn = btn("Download", FILLED, 0, 52) { downloadSelected() }
+        dlBtn.textSize = T_TITLE - 0.5f
+        val more = btn("More", TONAL, G_MORE, 52) { showMenu() }
+        val bottom = hrow()
+        bottom.setPadding(px(S4), px(S3), px(S4), px(S3))
+        bottom.background = ColorDrawable(pal.surface)
+        bottom.elevation = pxf(12f)
+        bottom.addView(dlBtn, lp(0, px(52), 1f))
+        bottom.addView(more, lp(WRAP, px(52)).apply { marginStart = px(S3) })
 
-        val scroll = ScrollView(this).apply {
-            isFillViewport = true
-            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(C_TOP, C_BOTTOM))
-            addView(root)
+        scroll = ScrollView(this)
+        scroll.isFillViewport = true
+        scroll.isVerticalScrollBarEnabled = false
+        scroll.addView(root)
+        // A hairline (and a soft shadow in light mode) under the top bar once the page is scrolled.
+        scroll.setOnScrollChangeListener { _, _, y, _, _ ->
+            topLine.alpha = if (y > 0) 1f else 0f
+            topBar.elevation = if (y > 0 && !pal.dark) pxf(3f) else 0f
         }
-        setContentView(LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            addView(scroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
-            addView(bottom, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT))
-        })
+        val bottomLine = View(this)
+        bottomLine.setBackgroundColor(pal.outline)
+        val page = LinearLayout(this)
+        page.orientation = LinearLayout.VERTICAL
+        page.setBackgroundColor(pal.bg)
+        page.addView(topBar, lp(MATCH, WRAP))
+        page.addView(topLine, lp(MATCH, 1))
+        page.addView(scroll, lp(MATCH, 0, 1f))
+        page.addView(bottomLine, lp(MATCH, 1))
+        page.addView(bottom, lp(MATCH, WRAP))
+        setContentView(page)
+        paintSystemBars()
+        paintStatus()
+        refreshChip()
+        updateFolderLabel()
+    }
+
+    override fun onConfigurationChanged(c: Configuration) {
+        super.onConfigurationChanged(c)
+        if (isNight(c) != pal.dark) applyTheme()
+    }
+
+    /**
+     * The system switched between light and dark: rebuild every view in the new palette, keeping what is
+     * on screen (typed links, status, ticks, chosen quality, status lines, progress). Items keep running;
+     * their background work looks up a.state / a.bar when it updates them, so it finds the new views.
+     */
+    private fun applyTheme() {
+        val typed = input.text.toString()
+        val said = status.text.toString()
+        val y = scroll.scrollY
+        val ticks = items.map { it.check.isChecked }
+        val sels = items.map { it.spinner.selectedItemPosition }
+        val states = items.map { it.state.text.toString() }
+        val bars = items.map { it.bar.progress }
+        pal = if (isNight()) DARK else LIGHT
+        setTheme(themeRes())
+        buildUi()
+        input.setText(typed)
+        status.text = said
+        for ((k, a) in items.withIndex()) {
+            buildCard(a)
+            a.check.isChecked = ticks[k]
+            a.spinner.setSelection(sels[k])
+            a.state.text = states[k]
+            paintState(a)
+            a.bar.progress = bars[k]
+            list.addView(a.box, cardParams())
+            refreshButtons(a)
+        }
+        list.layoutTransition = cardMotion()
+        updateCounts()
+        scroll.post { scroll.scrollTo(0, y) }
+    }
+
+    override fun onCreate(s: Bundle?) {
+        pal = if (isNight()) DARK else LIGHT
+        setTheme(themeRes())
+        super.onCreate(s)
+        dp = resources.displayMetrics.density
+        prefs = getSharedPreferences("vidgrab", MODE_PRIVATE)
+        buildUi()
         updateCounts()
         restore()
+        list.layoutTransition = cardMotion()
         sweepPartials()
         handleIntent(intent)
         if (android.os.Build.VERSION.SDK_INT >= 33)
@@ -415,6 +1085,7 @@ class MainActivity : Activity() {
                 }
             } catch (e: Exception) {
                 checkErr = rawError(e)
+                engineFailed = true
                 runOnUiThread { status.text = "Could not start the download engine. Tap here for details." }
             }
         }.start()
@@ -508,7 +1179,7 @@ class MainActivity : Activity() {
     private fun showDetails(title: String, text: String) {
         val engine = try { YoutubeDL.getInstance().versionName(application) } catch (_: Exception) { null }
         val full = ("Engine: " + (engine ?: "unknown") + "\n\n" + text).take(6000)
-        AlertDialog.Builder(this).setTitle(title).setMessage(full)
+        val dlg = AlertDialog.Builder(this, dialogTheme()).setTitle(title).setMessage(full)
             .setPositiveButton("Copy") { _, _ ->
                 getSystemService(ClipboardManager::class.java)
                     .setPrimaryClip(android.content.ClipData.newPlainText("VidGrab error", full))
@@ -516,6 +1187,12 @@ class MainActivity : Activity() {
             }
             .setNegativeButton("Close", null)
             .show()
+        // error text reads best in a monospace font, and can be selected
+        dlg.findViewById<TextView>(android.R.id.message)?.apply {
+            typeface = Typeface.MONOSPACE
+            textSize = T_CAPTION
+            setTextIsSelectable(true)
+        }
     }
 
     /** Returns a short readable cause, and whether it is a connection problem (worth retrying). */
@@ -556,7 +1233,7 @@ class MainActivity : Activity() {
         val name = if (t == null) "Download/VidGrab" else try {
             DocumentsContract.getTreeDocumentId(Uri.parse(t)).substringAfter(':').ifEmpty { "Internal storage" }
         } catch (_: Exception) { "custom folder" }
-        folderBtn.text = "Save to: $name  ·  Change"
+        folderLabel.text = name
     }
 
     private fun pickFolder() {
@@ -668,94 +1345,188 @@ class MainActivity : Activity() {
     }
 
     private fun addRow(a: Item) {
-        val wrap = LinearLayout.LayoutParams.WRAP_CONTENT
-        a.check = CheckBox(this).apply {
-            buttonTintList = ColorStateList.valueOf(C_PRIMARY)
-            setOnCheckedChangeListener { _, _ -> updateCounts() }
+        buildCard(a)
+        if (a.done) {
+            a.bar.progress = 100
+            setState(a, "Done - saved", C_OK)
         }
-        // thumbnail: a play icon on a soft tile until the picture has loaded
+        list.addView(a.box, cardParams())
+        items.add(a)
+        refreshButtons(a)
+        updateCounts()
+    }
+
+    private fun cardParams() = lp(MATCH, WRAP).apply { setMargins(0, px(S1 + 2), 0, px(S1 + 2)) }
+
+    /** The quality picker's texts, in the theme's colors. */
+    private fun qualityAdapter(labels: List<String>) =
+        object : ArrayAdapter<String>(this@MainActivity, android.R.layout.simple_spinner_item, labels) {
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                val v = super.getView(position, convertView, parent) as TextView
+                v.setTextColor(pal.text)
+                v.textSize = T_LABEL
+                v.typeface = MEDIUM
+                v.setPadding(px(14), 0, px(34), 0)    // room on the right for the chevron
+                return v
+            }
+
+            override fun getDropDownView(position: Int, convertView: View?, parent: ViewGroup): View {
+                val v = super.getDropDownView(position, convertView, parent) as TextView
+                v.setTextColor(pal.text)
+                v.textSize = T_BODY
+                v.setPadding(px(S4), px(S3), px(S4), px(S3))
+                return v
+            }
+        }.apply { setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+
+    /** The quality picker as a pill with a chevron. */
+    private fun styleChip(sp: Spinner) {
+        val pill = LayerDrawable(arrayOf<Drawable>(rounded(pal.surface2, R_PILL, pal.outline),
+            Glyph(G_CHEVRON_DOWN, pal.muted, px(16))))
+        pill.setLayerGravity(1, Gravity.CENTER_VERTICAL or Gravity.END)
+        pill.setLayerInsetEnd(1, px(12))
+        sp.background = ripple(pill)
+        sp.setPadding(0, 0, 0, 0)
+        sp.setPopupBackgroundDrawable(rounded(pal.surface, R_MD, pal.outline))
+        sp.dropDownVerticalOffset = px(S1)
+    }
+
+    /**
+     * Builds an item's card (also used to rebuild it after a theme change): thumbnail with a tick box,
+     * duration and "done" badges; title and meta; quality pill and actions; progress; status line.
+     */
+    private fun buildCard(a: Item) {
+        // thumbnail: a video icon on a soft tile until the picture has loaded
+        val thumb = FrameLayout(this)
+        thumb.background = rounded(pal.surface2, R_MD - 2)
+        thumb.clipToOutline = true
         a.thumbView = ImageView(this).apply {
-            background = bg(C_SOFT, 10)
-            clipToOutline = true
             scaleType = ImageView.ScaleType.CENTER
-            setImageResource(android.R.drawable.ic_media_play)
-            imageTintList = ColorStateList.valueOf(C_PRIMARY)
+            setImageDrawable(Glyph(G_VIDEO, pal.subtle, px(28), 1.8f))
         }
-        loadThumb(a)
-        val titles = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(px(10), 0, 0, 0)
+        thumb.addView(a.thumbView, FrameLayout.LayoutParams(MATCH, MATCH))
+        // the duration goes on the picture, the rest of the meta ("Site · Uploader") under the title
+        val parts = a.meta.split(" · ").filter { it.isNotEmpty() }
+        val dur = parts.firstOrNull { Regex("\\d+:\\d{2}(:\\d{2})?").matches(it) }
+        if (dur != null) thumb.addView(TextView(this).apply {
+            text = dur
+            textSize = 10.5f
+            typeface = MEDIUM
+            setTextColor(Color.WHITE)
+            background = rounded(Color.argb(190, 0, 0, 0), 6)
+            setPadding(px(5), px(1), px(5), px(1))
+        }, FrameLayout.LayoutParams(WRAP, WRAP, Gravity.BOTTOM or Gravity.END).apply { setMargins(0, 0, px(5), px(5)) })
+        a.doneBadge = ImageView(this).apply {
+            background = oval(pal.ok)
+            scaleType = ImageView.ScaleType.CENTER
+            setImageDrawable(Glyph(G_CHECK, if (pal.dark) pal.bg else Color.WHITE, px(14), 2.8f))
+            visibility = View.GONE
         }
+        thumb.addView(a.doneBadge, FrameLayout.LayoutParams(px(22), px(22), Gravity.TOP or Gravity.END)
+            .apply { setMargins(0, px(6), px(6), 0) })
+        a.check = checkBox(true).apply {
+            setOnCheckedChangeListener { _, _ -> paintCard(a); updateCounts() }
+        }
+        thumb.addView(a.check, FrameLayout.LayoutParams(WRAP, WRAP, Gravity.TOP or Gravity.START)
+            .apply { setMargins(px(6), px(6), 0, 0) })
+
+        val titles = LinearLayout(this)
+        titles.orientation = LinearLayout.VERTICAL
+        titles.setPadding(px(S3), 0, 0, 0)
         titles.addView(TextView(this).apply {
-            text = a.title; maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END
-            textSize = 15f; typeface = Typeface.DEFAULT_BOLD; setTextColor(C_TEXT)
+            text = a.title
+            maxLines = 2
+            ellipsize = TextUtils.TruncateAt.END
+            textSize = T_BODY + 0.5f
+            typeface = MEDIUM
+            setTextColor(pal.text)
+            setLineSpacing(px(1).toFloat(), 1f)
         })
-        if (a.meta.isNotEmpty()) titles.addView(TextView(this).apply {
-            text = a.meta; maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
-            textSize = 12f; setTextColor(C_MUTED); setPadding(0, px(2), 0, 0)
+        val metaText = parts.filter { it != dur }.joinToString(" · ")
+        if (metaText.isNotEmpty()) titles.addView(TextView(this).apply {
+            text = metaText
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            textSize = T_CAPTION
+            setTextColor(pal.muted)
+            setPadding(0, px(3), 0, 0)
         })
-        val top = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        top.addView(a.check, LinearLayout.LayoutParams(wrap, wrap))
-        top.addView(a.thumbView, LinearLayout.LayoutParams(px(96), px(54)))
-        top.addView(titles, LinearLayout.LayoutParams(0, wrap, 1f))
+        val top = LinearLayout(this)
+        top.orientation = LinearLayout.HORIZONTAL
+        top.addView(thumb, lp(px(112), px(63)))
+        top.addView(titles, lp(0, WRAP, 1f))
 
-        a.spinner = Spinner(this)
-        a.spinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, a.labels).apply {
-            setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
-        }
-        val quality = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        quality.addView(TextView(this).apply { text = "Quality"; textSize = 13f; setTextColor(C_MUTED) })
-        quality.addView(a.spinner, LinearLayout.LayoutParams(0, wrap, 1f).apply { leftMargin = px(8) })
-
-        a.bar = bar()
-        a.state = TextView(this).apply {
-            text = "Ready to download"; textSize = 13f; setTextColor(C_MUTED)
-            setOnClickListener { if (a.err.isNotEmpty()) showDetails(a.title, a.err) }
-        }
+        // quality pill on the left, actions on the right
+        a.spinner = Spinner(this, Spinner.MODE_DROPDOWN)
+        a.spinner.adapter = qualityAdapter(a.labels)
+        styleChip(a.spinner)
+        val chipBox = FrameLayout(this)
+        chipBox.addView(a.spinner, FrameLayout.LayoutParams(WRAP, px(36), Gravity.START or Gravity.CENTER_VERTICAL))
         // The two buttons change role: Start/Pause + Stop while unfinished, Open + Share when done.
-        a.toggle = btn("Start", PRIMARY) {
+        a.toggle = btn("Start", FILLED, G_PLAY, 38) {
             when {
                 a.done -> openItem(a)
                 a.busy && !a.paused && !a.cancelled -> pauseItem(a)
                 else -> startItem(a)
             }
         }
-        a.stopBtn = btn("Stop", DANGER) { if (a.done) shareItem(a) else stopItem(a) }
-        for (x in listOf(a.toggle, a.stopBtn)) { x.minHeight = px(38); x.minimumHeight = px(38) }
+        a.toggle.textSize = T_LABEL + 0.5f
+        a.toggle.setPadding(px(12), 0, px(16), 0)
+        a.stopBtn = ImageButton(this)
+        a.stopBtn.scaleType = ImageView.ScaleType.CENTER
+        a.stopBtn.setPadding(0, 0, 0, 0)
+        a.stopBtn.setOnClickListener { if (a.done) shareItem(a) else stopItem(a) }
+        val actions = hrow()
+        actions.addView(chipBox, lp(0, WRAP, 1f))
+        actions.addView(a.stopBtn, lp(px(38), px(38)).apply { marginStart = px(S2) })
+        actions.addView(a.toggle, lp(WRAP, px(38)).apply { marginStart = px(S2) })
 
-        val box = card()
-        add(box, top, 2)
-        add(box, quality, 2)
-        box.addView(a.bar, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, px(8))
-            .apply { setMargins(0, px(8), 0, px(4)) })
-        add(box, a.state, 2)
-        add(box, row(a.toggle, a.stopBtn), 4)
-        a.box = box
-        if (a.done) {
-            a.bar.progress = 100
-            setState(a, "Done - saved", C_OK)
+        a.bar = SmoothBar(this).apply {
+            max = 100
+            progressDrawable = barDrawable()
         }
-        list.addView(a.box, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT, wrap)
-            .apply { setMargins(0, px(6), 0, px(6)) })
-        items.add(a)
-        refreshButtons(a)
-        updateCounts()
+        a.state = TextView(this).apply {
+            text = "Ready to download"
+            textSize = T_LABEL
+            gravity = Gravity.CENTER_VERTICAL
+            compoundDrawablePadding = px(S2)
+            setLineSpacing(px(1).toFloat(), 1f)
+            setOnClickListener { if (a.err.isNotEmpty()) showDetails(a.title, a.err) }
+        }
+        paintState(a)
+
+        // Tapping the card ticks or unticks it.
+        val box = LinearLayout(this)
+        box.orientation = LinearLayout.VERTICAL
+        box.setPadding(px(S3), px(S3), px(S3), px(S3 + 2))
+        box.elevation = if (pal.dark) 0f else pxf(1.5f)
+        box.foreground = ripple(null, rounded(Color.WHITE, R_LG))
+        box.setOnClickListener { a.check.toggle() }
+        box.addView(top, lp(MATCH, WRAP))
+        box.addView(actions, lp(MATCH, WRAP).apply { topMargin = px(S3) })
+        box.addView(a.bar, lp(MATCH, px(5)).apply { topMargin = px(S3 + 2) })
+        box.addView(a.state, lp(MATCH, WRAP).apply { topMargin = px(S2 + 2) })
+        a.box = box
+        paintCard(a)
+        loadThumb(a)
     }
 
-    /** Video count in the list heading, "Select all" state, empty hint, and the Download button label. */
+    /** Card background; the outline turns accent when the card is ticked. */
+    private fun paintCard(a: Item) {
+        val on = a.check.isChecked
+        a.box.background = rounded(pal.surface, R_LG, if (on) fade(pal.accent, 0.75f) else pal.outline,
+            if (on) 1.5f else 1f)
+    }
+
+    /** Video count in the list heading, "Select all" state, empty state, and the Download button label. */
     private fun updateCounts() {
         val n = items.size
         val sel = items.count { it.check.isChecked && !it.done }
-        countLabel.text = if (n == 0) "YOUR VIDEOS" else "YOUR VIDEOS ($n)"
+        countBadge.text = n.toString()
+        countBadge.visibility = if (n == 0) View.GONE else View.VISIBLE
         empty.visibility = if (n == 0) View.VISIBLE else View.GONE
-        dlBtn.text = if (sel > 0) "Download ($sel)" else "Download"
+        selectAll.visibility = if (n == 0) View.INVISIBLE else View.VISIBLE
+        dlBtn.text = iconText(G_DOWNLOAD, if (sel > 0) "Download ($sel)" else "Download", Color.WHITE)
         syncing = true
         selectAll.isChecked = n > 0 && items.all { it.check.isChecked }
         syncing = false
@@ -786,13 +1557,15 @@ class MainActivity : Activity() {
                 val o = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
                 android.graphics.BitmapFactory.decodeFile(f.path, o)
                 var s = 1
-                while (o.outWidth / (s * 2) >= px(96)) s *= 2
+                while (o.outWidth / (s * 2) >= px(112)) s *= 2
                 val bmp = android.graphics.BitmapFactory.decodeFile(f.path,
                     android.graphics.BitmapFactory.Options().apply { inSampleSize = s }) ?: return@execute
                 runOnUiThread {
                     v.imageTintList = null
                     v.scaleType = ImageView.ScaleType.CENTER_CROP
                     v.setImageBitmap(bmp)
+                    v.alpha = 0f
+                    v.animate().alpha(1f).setDuration(260).start()
                 }
             } catch (_: Exception) {}
         }
@@ -819,40 +1592,88 @@ class MainActivity : Activity() {
         try { startActivity(Intent.createChooser(i, "Share")) } catch (_: Exception) {}
     }
 
-    /** Everything that is not the main Download action. */
-    private fun showMenu(anchor: View) {
+    /** Everything that is not the main Download action, in a bottom sheet. */
+    private fun showMenu() {
         val busy = items.any { it.busy }
-        // Counts in the labels (and greyed-out items) show at a glance what each action would touch.
+        // Counts on the rows (and greyed-out rows) show at a glance what each action would touch.
         val ticked = items.filter { it.check.isChecked }
         val tickedUnfinished = ticked.count { !it.done }
         val tickedWithFiles = ticked.count { it.files.isNotEmpty() }
         val completed = items.count { it.done }
-        PopupMenu(this, anchor).apply {
-            menu.add(0, 1, 1, "Remove completed ($completed)").isEnabled = completed > 0
-            menu.add(0, 2, 2, "Remove ticked unfinished ($tickedUnfinished)").isEnabled = tickedUnfinished > 0
-            menu.add(0, 3, 3, "Delete ticked videos (${ticked.size})").isEnabled = ticked.isNotEmpty()
-            menu.add(0, 4, 4, "Optimize ticked files ($tickedWithFiles)").isEnabled = tickedWithFiles > 0
-            menu.add(0, 5, 5, "Optimize a video from my phone").isEnabled = ready
-            menu.add(0, 6, 6, when {
-                updating -> "Updating engine..."
-                busy -> "Update engine (after downloads finish)"
-                else -> "Update engine"
-            }).isEnabled = ready && !updating && !busy
-            menu.add(0, 7, 7, "Remove all (${items.size})").isEnabled = items.isNotEmpty()
-            setOnMenuItemClickListener {
-                when (it.itemId) {
-                    1 -> removeCompleted()
-                    2 -> removeUnfinished()
-                    3 -> deleteTicked()
-                    4 -> optimizeFiles()
-                    5 -> pickVideos()
-                    6 -> update()
-                    7 -> removeAll()
-                }
-                true
-            }
-            show()
+        val d = Dialog(this, if (pal.dark) android.R.style.Theme_DeviceDefault_Dialog_NoActionBar
+            else android.R.style.Theme_DeviceDefault_Light_Dialog_NoActionBar)
+        val sheet = LinearLayout(this)
+        sheet.orientation = LinearLayout.VERTICAL
+        sheet.background = GradientDrawable().apply {
+            setColor(pal.surface)
+            val r = pxf(28f)
+            cornerRadii = floatArrayOf(r, r, r, r, 0f, 0f, 0f, 0f)
         }
+        sheet.setPadding(px(S2), px(S3), px(S2), px(S4))
+        sheet.addView(View(this).apply { background = rounded(pal.outlineStrong, R_PILL) },
+            lp(px(36), px(4)).apply { gravity = Gravity.CENTER_HORIZONTAL; bottomMargin = px(S3) })
+        sheet.addView(label("More actions", T_TITLE, pal.text, MEDIUM).apply { setPadding(px(S4), 0, px(S4), px(S2)) })
+        val rows = LinearLayout(this)
+        rows.orientation = LinearLayout.VERTICAL
+        val scrollRows = ScrollView(this)
+        scrollRows.isVerticalScrollBarEnabled = false
+        scrollRows.addView(rows)
+        sheet.addView(scrollRows, lp(MATCH, WRAP))
+
+        fun entry(icon: Int, title: String, sub: String, count: Int?, enabled: Boolean, danger: Boolean = false,
+                  act: () -> Unit) {
+            val r = hrow()
+            r.setPadding(px(S3), px(10), px(S4), px(10))
+            r.background = ripple(null, rounded(Color.WHITE, R_MD))
+            val fg = if (danger) pal.danger else pal.accent
+            r.addView(tile(icon, fg, if (danger) pal.dangerSoft else pal.accentSoft, 40, R_MD - 2), lp(px(40), px(40)))
+            val t = LinearLayout(this)
+            t.orientation = LinearLayout.VERTICAL
+            t.setPadding(px(S3), 0, px(S2), 0)
+            t.addView(label(title, T_BODY + 1, if (danger) pal.danger else pal.text, MEDIUM))
+            t.addView(subText(sub))
+            r.addView(t, lp(0, WRAP, 1f))
+            if (count != null) r.addView(label(count.toString(), T_CAPTION, pal.muted, MEDIUM).apply {
+                background = rounded(pal.surface2, R_PILL)
+                gravity = Gravity.CENTER
+                minWidth = px(26)
+                setPadding(px(8), px(3), px(8), px(3))
+            }, lp(WRAP, WRAP))
+            r.isEnabled = enabled
+            r.alpha = if (enabled) 1f else 0.4f
+            if (enabled) r.setOnClickListener { d.dismiss(); act() }
+            rows.addView(r, lp(MATCH, WRAP))
+        }
+
+        entry(G_DONE_ALL, "Remove completed", "Clears finished items. Files are kept.",
+            completed, completed > 0) { removeCompleted() }
+        entry(G_CLOSE, "Remove ticked unfinished", "Stops them and discards their partial files",
+            tickedUnfinished, tickedUnfinished > 0) { removeUnfinished() }
+        entry(G_TRASH, "Delete ticked videos", "Also deletes their saved files from your phone",
+            ticked.size, ticked.isNotEmpty(), true) { deleteTicked() }
+        entry(G_SPARK, "Optimize ticked files", "Fixes playback and seeking, without re-encoding",
+            tickedWithFiles, tickedWithFiles > 0) { optimizeFiles() }
+        entry(G_PHONE, "Optimize a video from my phone", "Saves an optimized copy; the original is untouched",
+            null, ready) { pickVideos() }
+        entry(G_REFRESH, when {
+            updating -> "Updating engine..."
+            busy -> "Update engine (after downloads finish)"
+            else -> "Update engine"
+        }, "Gets the newest site support (yt-dlp)", null, ready && !updating && !busy) { update() }
+        entry(G_CLEAR_ALL, "Remove all", "Empties the list. Saved files are kept.",
+            items.size, items.isNotEmpty()) { removeAll() }
+
+        d.setContentView(sheet)
+        d.setCanceledOnTouchOutside(true)
+        d.window?.let { w ->
+            w.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            w.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            w.setGravity(Gravity.BOTTOM)
+            w.setWindowAnimations(android.R.style.Animation_InputMethod)
+            w.setDimAmount(0.45f)
+            w.decorView.setPadding(0, 0, 0, 0)
+        }
+        d.show()
     }
 
     private fun persist() {
@@ -891,7 +1712,7 @@ class MainActivity : Activity() {
 
     private fun confirm(msg: String, ok: () -> Unit) {
         if (autoConfirm) { ok(); return }
-        AlertDialog.Builder(this).setMessage(msg)
+        AlertDialog.Builder(this, dialogTheme()).setMessage(msg)
             .setPositiveButton("Yes") { _, _ -> ok() }
             .setNegativeButton("No", null).show()
     }
@@ -1228,8 +2049,8 @@ class MainActivity : Activity() {
     private fun refreshButtons(a: Item) {
         if (a.done) {
             val has = a.files.isNotEmpty()
-            a.toggle.text = "Open"; style(a.toggle, PRIMARY); a.toggle.isEnabled = has
-            a.stopBtn.text = "Share"; style(a.stopBtn, SOFT); a.stopBtn.isEnabled = has
+            a.toggle.text = "Open"; setIcon(a.toggle, G_OPEN, 16); style(a.toggle, FILLED); a.toggle.isEnabled = has
+            styleRound(a.stopBtn, G_SHARE, "Share", TONAL); a.stopBtn.isEnabled = has
         } else {
             val stopping = a.busy && (a.paused || a.cancelled)
             a.toggle.text = when {
@@ -1237,13 +2058,20 @@ class MainActivity : Activity() {
                 a.busy -> "Pause"
                 else -> "Start"
             }
-            style(a.toggle, if (a.busy) SOFT else PRIMARY)
+            setIcon(a.toggle, when {
+                stopping -> 0
+                a.busy -> G_PAUSE
+                else -> G_PLAY
+            }, 16)
+            style(a.toggle, if (a.busy) TONAL else FILLED)
             a.toggle.isEnabled = !stopping
-            a.stopBtn.text = "Stop"; style(a.stopBtn, DANGER)
+            styleRound(a.stopBtn, G_STOP, "Stop", DANGER)
             a.stopBtn.isEnabled = !(a.busy && a.cancelled)
         }
         a.spinner.isEnabled = !a.busy && !a.done
+        a.spinner.alpha = if (a.spinner.isEnabled) 1f else 0.55f
         a.bar.progressTintList = ColorStateList.valueOf(if (a.done) C_OK else C_PRIMARY)
+        a.doneBadge.visibility = if (a.done) View.VISIBLE else View.GONE
     }
 
     /** Keeps the background service (and its notification) running while any download is active. */
@@ -1264,8 +2092,21 @@ class MainActivity : Activity() {
 
     /** Sets an item's status line; tone colors it (muted, blue = active, amber = waiting, red = error, green = done). */
     private fun setState(a: Item, text: String, tone: Int = C_MUTED) {
+        a.tone = toneKey(tone)
         a.state.text = text
-        a.state.setTextColor(tone)
+        paintState(a)
+    }
+
+    /** Colors the status line and its leading mark: a dot, a check when done, an alert on errors. */
+    private fun paintState(a: Item) {
+        val c = toneColor(a.tone)
+        a.state.setTextColor(c)
+        val mark: Drawable = when (a.tone) {
+            K_OK -> Glyph(G_CHECK, c, -1, 2.6f).apply { setBounds(0, 0, px(15), px(15)) }
+            K_ERROR -> Glyph(G_ALERT, c).apply { setBounds(0, 0, px(15), px(15)) }
+            else -> InsetDrawable(oval(c), px(4)).apply { setBounds(0, 0, px(15), px(15)) }
+        }
+        a.state.setCompoundDrawablesRelative(mark, null, null, null)
     }
 
     private fun ui(a: Item, text: String, tone: Int = C_MUTED) = runOnUiThread {
@@ -1535,6 +2376,7 @@ class MainActivity : Activity() {
                 runOnUiThread { status.text = "Update failed: " + why(e).first }
             } finally {
                 updating = false
+                runOnUiThread { refreshChip() }
             }
         }.start()
     }
