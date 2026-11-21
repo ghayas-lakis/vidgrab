@@ -503,9 +503,10 @@ class MainActivity : Activity() {
             h.runOnUiThread {
                 val x = host ?: h
                 when (action) {
-                    Notifier.ACT_PAUSE -> if (a.busy && !a.paused && !a.cancelled) x.pauseItem(a)
+                    Notifier.ACT_PAUSE -> { if (a.busy && !a.paused && !a.cancelled) x.pauseItem(a) }
                     Notifier.ACT_STOP -> { x.stopItem(a); if (!a.busy) Notifier.clear(x, a) }
                     Notifier.ACT_RESUME -> x.startItem(a)
+                    else -> {}
                 }
             }
             return true
