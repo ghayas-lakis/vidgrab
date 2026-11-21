@@ -163,5 +163,7 @@ abstract class E2EBase {
     companion object {
         const val OK = "ok"
         const val TEST_VIDEO = "https://raw.githubusercontent.com/ghayas-lakis/vidgrab/main/testdata/vidgrab-test.mp4"
+        const val TEST_VIDEO_CDN = "https://cdn.jsdelivr.net/gh/ghayas-lakis/vidgrab@main/testdata/vidgrab-test.mp4"
+        const val TEST_PLAYLIST = "https://raw.githubusercontent.com/ghayas-lakis/vidgrab/main/testdata/playlist.rss"
     }
 }

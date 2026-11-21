@@ -15,6 +15,15 @@
             android:name=".DownloadService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+        <!-- Pause / Stop / Resume buttons in the download notifications -->
+        <receiver
+            android:name=".NotificationActions"
+            android:exported="false" />
+        <!-- Signing in to a site (More > Sign in to a site) -->
+        <activity
+            android:name=".SignInActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

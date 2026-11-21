@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- A two-video "playlist" for the end-to-end tests (yt-dlp reads RSS feeds as playlists). -->
+<rss version="2.0">
+  <channel>
+    <title>VidGrab test playlist</title>
+    <link>https://github.com/ghayas-lakis/vidgrab</link>
+    <description>Two links to the same small test video</description>
+    <item>
+      <title>Test video (GitHub)</title>
+      <link>https://raw.githubusercontent.com/ghayas-lakis/vidgrab/main/testdata/vidgrab-test.mp4</link>
+    </item>
+    <item>
+      <title>Test video (jsDelivr)</title>
+      <link>https://cdn.jsdelivr.net/gh/ghayas-lakis/vidgrab@main/testdata/vidgrab-test.mp4</link>
+    </item>
+  </channel>
+</rss>

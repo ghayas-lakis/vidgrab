@@ -2,6 +2,15 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
+
+// CI's emulator tests build with -Pvidgrab.abis=x86_64 (the engine ships that too). Phones are ARM.
+val abiOverride = (project.findProperty("vidgrab.abis") as String?)?.split(",")?.map { it.trim() }
+
+// A fixed signing key, so a new build installs over the previous one (keeping the list and the updated
+// engine). CI writes it from the VIDGRAB_KEYSTORE secret (see ci/build.sh and the README). Without it
+// the build uses Android's temporary debug key.
+val fixedKey = System.getenv("VIDGRAB_KEYSTORE_FILE")?.let { file(it) }?.takeIf { it.exists() }
+
 android {
     namespace = "com.example.vidgrab"
     compileSdk = 34
@@ -9,12 +18,34 @@ android {
         applicationId = "com.example.vidgrab"
         minSdk = 29
         targetSdk = 34
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = 3
+        versionName = "1.2"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        // Phones are ARM. CI's emulator tests build with -Pvidgrab.abis=x86_64 (the engine ships that too).
-        val abis = (project.findProperty("vidgrab.abis") as String?)?.split(",")?.map { it.trim() }
-        ndk { abiFilters += abis ?: listOf("arm64-v8a", "armeabi-v7a") }
+        if (abiOverride != null) ndk { abiFilters += abiOverride }
+    }
+    // One APK per phone type: each is about half the size of one APK holding both.
+    // arm64-v8a fits nearly every phone from the last 8 years; armeabi-v7a is for older 32-bit ones.
+    splits {
+        abi {
+            isEnable = abiOverride == null
+            reset()
+            include("arm64-v8a", "armeabi-v7a")
+            isUniversalApk = false
+        }
+    }
+    signingConfigs {
+        if (fixedKey != null) create("fixed") {
+            storeFile = fixedKey
+            storeType = "pkcs12"
+            storePassword = System.getenv("VIDGRAB_KEYSTORE_PASSWORD") ?: "vidgrab"
+            keyAlias = "vidgrab"
+            keyPassword = System.getenv("VIDGRAB_KEYSTORE_PASSWORD") ?: "vidgrab"
+        }
+    }
+    buildTypes {
+        getByName("debug") {
+            if (fixedKey != null) signingConfig = signingConfigs.getByName("fixed")
+        }
     }
     packaging { jniLibs { useLegacyPackaging = true } }
     compileOptions {

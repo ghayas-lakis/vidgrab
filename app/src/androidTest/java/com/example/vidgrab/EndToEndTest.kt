@@ -1,5 +1,7 @@
 package com.example.vidgrab
 
+import android.content.Context
+import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -74,5 +76,52 @@ class EndToEndTest : E2EBase() {
         val card = addLink(TEST_VIDEO)
         act { a -> card.check.isChecked = true; a.testRemoveUnfinished() }
         waitFor("Remove ticked unfinished", 30) { a -> if (a.testItems().isEmpty()) OK else null }
+    }
+
+    /** A playlist link (testdata/playlist.rss: two videos) is replaced by a card for each of its videos. */
+    @Test
+    fun d_playlistLink() {
+        act { it.testAddLinks(TEST_PLAYLIST) }
+        waitFor("the playlist's two videos to be added", 240) { a ->
+            val urls = a.testItems().map { it.url }
+            when {
+                TEST_VIDEO in urls && TEST_VIDEO_CDN in urls -> OK
+                a.testCheckErr().isNotEmpty() && !a.testStatus().startsWith("Checking") -> "The link check failed"
+                else -> null
+            }
+        }
+        assertTrue("The playlist link itself should not become a card", item(TEST_PLAYLIST) == null)
+    }
+
+    /**
+     * The screen closes during a download (like swiping VidGrab away from Recents: the process stays,
+     * as it does while the download service runs). A new screen must show the same, live download and
+     * its result - not the saved copy of the list, which is removed here to prove it.
+     */
+    @Test
+    fun e_downloadSurvivesClosingTheScreen() {
+        val card = addLink(TEST_VIDEO)
+        act { a ->
+            for (c in a.testItems()) c.check.isChecked = c === card
+            a.testDownloadTicked()
+        }
+        sc.close()
+        ctx.getSharedPreferences("vidgrab", Context.MODE_PRIVATE).edit().remove("items").commit()
+        sc = ActivityScenario.launch(MainActivity::class.java)
+        act { it.autoConfirm = true }
+        waitFor("the download to finish on the new screen", 300) { a ->
+            val c = a.testItems().firstOrNull { it.url == TEST_VIDEO }
+            val s = if (c == null) "" else a.testState(c)
+            when {
+                c == null -> "The new screen lost the download"
+                s.startsWith("Done") -> OK
+                "Tap Start to retry" in s -> "Download failed: $s"
+                else -> null
+            }
+        }
+        val c = item(TEST_VIDEO)!!
+        assertTrue("The new screen should show the same download", c === card)
+        assertEquals(report(), "Done - saved", act { it.testState(c) })
+        assertEquals("Saved files: ${c.files}", 1, c.files.size)
     }
 }

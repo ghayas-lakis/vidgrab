@@ -406,6 +406,7 @@ class MainActivity : Activity() {
         @Volatile var peakOnWifi = false
         @Volatile var slowRestarts = 0
         @Volatile var err = ""            // full text of the last failure, shown when the status is tapped
+        @Volatile var note = ""           // the last status line set by the download work (for its notification)
         var done = false
         val files = mutableListOf<String>()
     }
@@ -423,66 +424,98 @@ class MainActivity : Activity() {
     private lateinit var topBar: LinearLayout
     private lateinit var scroll: ScrollView
     private lateinit var prefs: SharedPreferences
-    @Volatile private var updating = false
-    @Volatile private var engineFailed = false                    // the engine could not start
-    @Volatile private var checkErr = ""                           // details of the last failed link check
     private var syncing = false                                   // updating "Select all" from code
-    private val imgPool = Executors.newFixedThreadPool(2)         // thumbnails
-    private val analyzer = Executors.newSingleThreadExecutor()
-    private val downloader = Executors.newFixedThreadPool(2)
-    private val items = CopyOnWriteArrayList<Item>()
     private var dp = 1f
-    private var svcOn = false
-    @Volatile private var ready = false
     private val handler = Handler(Looper.getMainLooper())
     private val checkRun = Runnable { autoCheck() }
-    private val checking = ConcurrentHashMap.newKeySet<String>()   // links being checked right now
     private var prevLinks = setOf<String>()
-    private val failed = ConcurrentHashMap.newKeySet<String>()     // links that cannot be downloaded (not retried)
 
+    /**
+     * The list, the download workers and the network watcher belong to the PROCESS, not to one screen.
+     * The foreground service keeps the process alive while downloads run, so closing VidGrab (even
+     * swiping it away from Recents) no longer cuts running downloads off: the next screen picks them
+     * up (reattach) and background work reports to whichever screen is current (host / onUi).
+     */
     companion object {
-        // Downloads running in this process; survives the activity being recreated.
+        // Downloads running in this process (their partial-file folders).
         private val running = ConcurrentHashMap.newKeySet<String>()
-    }
+        private val items = CopyOnWriteArrayList<Item>()
+        private val imgPool = Executors.newFixedThreadPool(2)         // thumbnails
+        private val analyzer = Executors.newSingleThreadExecutor()   // link checks, optimizing
+        private val downloader = Executors.newFixedThreadPool(2)
+        private val checking = ConcurrentHashMap.newKeySet<String>()   // links being checked right now
+        private val failed = ConcurrentHashMap.newKeySet<String>()     // links that cannot be downloaded (not retried)
+        @Volatile private var ready = false
+        @Volatile private var initStarted = false
+        @Volatile private var updating = false
+        @Volatile private var engineFailed = false                    // the engine could not start
+        @Volatile private var checkErr = ""                           // details of the last failed link check
+        @Volatile private var svcOn = false
+        @Volatile private var pal = LIGHT
+        @Volatile private var curNet: Network? = null
+        private var netOn = false
+        /** The screen on display (or the last one shown): background work reports its results there. */
+        @Volatile private var host: MainActivity? = null
 
-    @Volatile private var curNet: Network? = null
+        // When the connection drops or changes, stop running downloads at once so they never keep using a
+        // dead connection; the work loop resumes them from the partial file on a usable network.
+        private val netCb = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                val prev = curNet
+                curNet = network
+                if (prev != null && prev != network) restartRunning()   // e.g. mobile data -> Wi-Fi
+            }
 
-    // When the connection drops or changes, stop running downloads at once so they never keep using a
-    // dead connection; the work loop resumes them from the partial file on a usable network.
-    private val netCb = object : ConnectivityManager.NetworkCallback() {
-        override fun onAvailable(network: Network) {
-            val prev = curNet
-            curNet = network
-            if (prev != null && prev != network) restartRunning()   // e.g. mobile data -> Wi-Fi
+            override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
+                val h = host ?: return
+                val cm = h.applicationContext.getSystemService(ConnectivityManager::class.java)
+                if (h.wifiOnly() && !h.onWifi(cm, caps)) restartRunning()
+                if (caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) h.runOnUiThread { host?.autoCheck() }
+            }
+
+            override fun onLost(network: Network) {
+                if (network == curNet) curNet = null
+                restartRunning()
+            }
         }
 
-        override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
-            if (wifiOnly() && !onWifi(getSystemService(ConnectivityManager::class.java), caps)) restartRunning()
-            if (caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) runOnUiThread { autoCheck() }
+        private fun kill(a: Item) {
+            try { YoutubeDL.getInstance().destroyProcessById(a.pid) } catch (_: Exception) {}
         }
 
-        override fun onLost(network: Network) {
-            if (network == curNet) curNet = null
-            restartRunning()
+        /** Stops every download that is transferring data; each one resumes by itself (from its partial file). */
+        private fun restartRunning() {
+            for (a in items) if (a.proc && !a.post) {
+                a.netKill = true
+                a.afterNet = true
+                a.slowRestarts = 0
+                kill(a)
+            }
+        }
+
+        /**
+         * A button in a download's notification (see Notifier). Returns false when the download is no
+         * longer known (the process was restarted), so the stale notification can be removed.
+         */
+        internal fun fromNotification(action: String, url: String): Boolean {
+            val h = host ?: return false
+            val a = items.firstOrNull { it.url == url } ?: return false
+            h.runOnUiThread {
+                val x = host ?: h
+                when (action) {
+                    Notifier.ACT_PAUSE -> if (a.busy && !a.paused && !a.cancelled) x.pauseItem(a)
+                    Notifier.ACT_STOP -> { x.stopItem(a); if (!a.busy) Notifier.clear(x, a) }
+                    Notifier.ACT_RESUME -> x.startItem(a)
+                }
+            }
+            return true
         }
     }
 
-    private fun kill(a: Item) {
-        try { YoutubeDL.getInstance().destroyProcessById(a.pid) } catch (_: Exception) {}
-    }
-
-    /** Stops every download that is transferring data; each one resumes by itself (from its partial file). */
-    private fun restartRunning() {
-        for (a in items) if (a.proc && !a.post) {
-            a.netKill = true
-            a.afterNet = true
-            a.slowRestarts = 0
-            kill(a)
-        }
-    }
+    /** Runs f on the main thread with the current screen (which may not be the one that started the work). */
+    private fun onUi(f: (MainActivity) -> Unit) = runOnUiThread { f(host ?: this) }
 
     // ---------- design helpers ----------
-    @Volatile private var pal = LIGHT
     // Status tones; the download code passes these to setState() / ui().
     private val C_MUTED: Int get() = pal.muted
     private val C_PRIMARY: Int get() = pal.accent
@@ -1034,15 +1067,28 @@ class MainActivity : Activity() {
         val typed = input.text.toString()
         val said = status.text.toString()
         val y = scroll.scrollY
-        val ticks = items.map { it.check.isChecked }
-        val sels = items.map { it.spinner.selectedItemPosition }
-        val states = items.map { it.state.text.toString() }
-        val bars = items.map { it.bar.progress }
         pal = if (isNight()) DARK else LIGHT
         setTheme(themeRes())
         buildUi()
         input.setText(typed)
         status.text = said
+        reattach()
+        scroll.post { scroll.scrollTo(0, y) }
+    }
+
+    /**
+     * Shows the process's list in this screen: after a theme change, and when a new screen opens while
+     * the list is still alive (e.g. VidGrab was closed during a download). Each card is rebuilt with what
+     * the previous one showed (tick, quality, status line, progress); running downloads update the new
+     * views from then on, because they look up a.state / a.bar each time.
+     */
+    private fun reattach() {
+        val ticks = items.map { it.check.isChecked }
+        val sels = items.map { it.spinner.selectedItemPosition }
+        val states = items.map { it.state.text.toString() }
+        val bars = items.map { it.bar.progress }
+        list.layoutTransition = null
+        list.removeAllViews()
         for ((k, a) in items.withIndex()) {
             buildCard(a)
             a.check.isChecked = ticks[k]
@@ -1055,7 +1101,6 @@ class MainActivity : Activity() {
         }
         list.layoutTransition = cardMotion()
         updateCounts()
-        scroll.post { scroll.scrollTo(0, y) }
     }
 
     override fun onCreate(s: Bundle?) {
@@ -1065,30 +1110,57 @@ class MainActivity : Activity() {
         dp = resources.displayMetrics.density
         prefs = getSharedPreferences("vidgrab", MODE_PRIVATE)
         buildUi()
+        host = this
+        // A fresh process starts from the saved list; otherwise the live one (with running downloads) is shown.
+        if (items.isEmpty()) restore() else reattach()
         updateCounts()
-        restore()
         list.layoutTransition = cardMotion()
         sweepPartials()
         handleIntent(intent)
         if (android.os.Build.VERSION.SDK_INT >= 33)
             requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 2)
-        try { getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(netCb) } catch (_: Exception) {}
+        // Registered once for the whole process (not per screen), so it also works with no screen open.
+        if (!netOn) try {
+            applicationContext.getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(netCb)
+            netOn = true
+        } catch (_: Exception) {}
+        when {
+            ready -> {
+                status.text = "Ready (engine ${YoutubeDL.getInstance().versionName(application)}). Paste links above."
+                handler.post { autoCheck() }
+            }
+            engineFailed -> status.text = "Could not start the download engine. Tap here for details."
+            !initStarted -> startEngine()
+        }
+    }
+
+    private fun startEngine() {
+        initStarted = true
         Thread {
             try {
                 YoutubeDL.getInstance().init(application)
                 FFmpeg.getInstance().init(application)
                 autoUpdate()
                 ready = true
-                runOnUiThread {
-                    status.text ="Ready (engine ${YoutubeDL.getInstance().versionName(application)}). Paste links above."
-                    autoCheck()
+                onUi { h ->
+                    h.status.text = "Ready (engine ${YoutubeDL.getInstance().versionName(application)}). Paste links above."
+                    h.autoCheck()
                 }
             } catch (e: Exception) {
                 checkErr = rawError(e)
                 engineFailed = true
-                runOnUiThread { status.text = "Could not start the download engine. Tap here for details." }
+                onUi { h -> h.status.text = "Could not start the download engine. Tap here for details." }
             }
         }.start()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Another VidGrab screen was in front (e.g. one opened by a share from another app): take the list back.
+        if (host !== this) {
+            host = this
+            reattach()
+        }
     }
 
     /**
@@ -1099,7 +1171,7 @@ class MainActivity : Activity() {
         val last = prefs.getLong("engineChecked", 0L)
         if (System.currentTimeMillis() - last < 24 * 60 * 60 * 1000L || !online()) return
         updating = true
-        runOnUiThread { status.text = "Updating the download engine..." }
+        onUi { h -> h.status.text = "Updating the download engine..." }
         try {
             YoutubeDL.getInstance().updateYoutubeDL(application, YoutubeDL.UpdateChannel.NIGHTLY)
             prefs.edit().putLong("engineChecked", System.currentTimeMillis()).apply()
@@ -1118,10 +1190,8 @@ class MainActivity : Activity() {
         if (items.any { it.busy }) moveTaskToBack(true) else super.onBackPressed()
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        try { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(netCb) } catch (_: Exception) {}
-    }
+    // Nothing to release: the list, the workers and the network watcher outlive this screen on purpose.
+    // `host` keeps pointing here until the next screen opens, so background work still has a context.
 
     override fun onNewIntent(i: Intent) {
         super.onNewIntent(i)
@@ -1203,7 +1273,8 @@ class MainActivity : Activity() {
         fun has(vararg k: String) = k.any { it in t }
         return when {
             has("private video") -> "This video is private" to false
-            has("sign in", "log in", "login", "not a bot") -> "This site asks for a login" to false
+            has("sign in", "log in", "login", "not a bot") ->
+                "This site asks for a login (More > Sign in to a site)" to false
             has("not available in your country", "geo restrict", "geo-restrict") -> "Not available in your country" to false
             has("unsupported url") -> "This link is not supported" to false
             has("video unavailable", "has been removed", "does not exist", "http error 404") -> "Video not found or removed" to false
@@ -1252,6 +1323,17 @@ class MainActivity : Activity() {
             if (uris.isNotEmpty()) optimizePicked(uris)
             return
         }
+        if (req == 4) {
+            val sites = data?.getStringExtra("sites").orEmpty()
+            if (res == RESULT_OK && sites.isNotEmpty()) {
+                // links that needed a login are worth checking again now
+                failed.clear()
+                prevLinks = emptySet()
+                tell("Signed in ($sites). VidGrab now uses this login for links and downloads.")
+                autoCheck()
+            } else if (res == RESULT_OK) tell("No login was found - sign in on the page, then tap Done.")
+            return
+        }
         if (req == 1 && res == RESULT_OK) {
             val u = data?.data ?: return
             contentResolver.takePersistableUriPermission(u,
@@ -1282,13 +1364,29 @@ class MainActivity : Activity() {
             val details = StringBuilder()
             var added = 0
             for ((n, u) in fresh.withIndex()) {
-                runOnUiThread { status.text = "Checking link ${n + 1} of ${fresh.size}..." }
+                onUi { h -> h.status.text = "Checking link ${n + 1} of ${fresh.size}..." }
+                val jar = Cookies.forRun(this)
                 try {
                     val req = YoutubeDLRequest(u)
                     req.addOption("--dump-single-json")
-                    req.addOption("--no-playlist")
+                    req.addOption("--no-playlist")      // a video link that also names a playlist: just the video
+                    req.addOption("--flat-playlist")    // a playlist link: list its videos without checking each one
                     req.addOption("--socket-timeout", "20")
+                    if (jar != null) req.addOption("--cookies", jar.absolutePath)
                     val j = JSONObject(YoutubeDL.getInstance().execute(req).out)
+                    if (j.optString("_type") == "playlist") {
+                        val entries = playlistEntries(j)
+                        failed.add(u)                   // handled: don't check the playlist link again
+                        checking.remove(u)
+                        if (entries.isEmpty()) {
+                            problems.add("Link ${n + 1}: This playlist has no videos VidGrab can download")
+                        } else {
+                            val title = j.optString("title", "").ifEmpty { "Playlist" }
+                            onUi { h -> h.pickFromPlaylist(u, title, entries) }
+                            added++
+                        }
+                        continue
+                    }
                     val sizes = mutableMapOf<Int, Long>()
                     val fm = j.optJSONArray("formats")
                     for (k in 0 until (fm?.length() ?: 0)) {
@@ -1312,11 +1410,11 @@ class MainActivity : Activity() {
                         j.optString("uploader", ""))
                         .filter { it.isNotEmpty() && it != "null" }.joinToString(" · ")
                     val item = Item(u, j.optString("title", u), labels, choices, j.optString("thumbnail", ""), meta)
-                    runOnUiThread {
+                    onUi { h ->
                         if (items.none { it.url == u }) {
-                            addRow(item)
+                            h.addRow(item)
                             item.check.isChecked = true
-                            persist()
+                            h.persist()
                         }
                         checking.remove(u)
                     }
@@ -1327,15 +1425,65 @@ class MainActivity : Activity() {
                     checking.remove(u)
                     problems.add("Link ${n + 1}: $msg")
                     details.append(u).append('\n').append(rawError(e)).append("\n\n")
+                } finally {
+                    jar?.delete()
                 }
             }
             checkErr = details.toString().trim()
-            runOnUiThread {
+            onUi { h ->
                 val head = if (added > 0) "Pick a resolution for each video, then tap Download." else ""
                 val tail = if (problems.isNotEmpty()) "Tap here for details." else ""
-                status.text = (listOf(head) + problems + tail).filter { it.isNotEmpty() }.joinToString("\n")
+                h.status.text = (listOf(head) + problems + tail).filter { it.isNotEmpty() }.joinToString("\n")
             }
         }
+    }
+
+    /** (link, title) of each video in a playlist checked with --flat-playlist. */
+    private fun playlistEntries(j: JSONObject): List<Pair<String, String>> {
+        val out = mutableListOf<Pair<String, String>>()
+        val es = j.optJSONArray("entries") ?: return out
+        for (k in 0 until es.length()) {
+            val e = es.optJSONObject(k) ?: continue
+            val link = listOf(e.optString("webpage_url", ""), e.optString("url", ""))
+                .firstOrNull { it.startsWith("http") } ?: continue
+            val t = e.optString("title", "").let { if (it.isEmpty() || it == "null") link else it }
+            if (out.none { it.first == link }) out.add(link to t)
+        }
+        return out
+    }
+
+    /**
+     * A playlist (or channel) link: lets the user tick which of its videos to add. The ticked links go into
+     * the box in place of the playlist link, and are then checked like any pasted link.
+     */
+    private fun pickFromPlaylist(link: String, title: String, entries: List<Pair<String, String>>) {
+        val shown = entries.take(300)
+        val picked = BooleanArray(shown.size) { true }
+        fun addPicked() {
+            removeFromInput(link)
+            val chosen = shown.filterIndexed { k, _ -> picked[k] }.map { it.first }
+            if (chosen.isEmpty()) return
+            val t = input.text.toString().trimEnd()
+            input.setText((if (t.isEmpty()) "" else t + "\n") + chosen.joinToString("\n") + "\n")
+            tell("Adding ${chosen.size} video(s) from \"$title\"...")
+        }
+        if (autoConfirm) { addPicked(); return }
+        AlertDialog.Builder(this, dialogTheme())
+            .setTitle(title + " (" + entries.size + " videos" + (if (entries.size > shown.size) ", first ${shown.size} shown" else "") + ")")
+            .setMultiChoiceItems(shown.map { it.second }.toTypedArray(), picked) { _, k, on -> picked[k] = on }
+            .setPositiveButton("Add ticked") { _, _ -> addPicked() }
+            .setNeutralButton("Untick all", null)
+            .setNegativeButton("Cancel") { _, _ -> removeFromInput(link) }
+            .show()
+            .also { d ->
+                // "Untick all" / "Tick all" without closing the dialog
+                val b = d.getButton(AlertDialog.BUTTON_NEUTRAL)
+                b.setOnClickListener {
+                    val on = picked.none { it }
+                    for (k in picked.indices) { picked[k] = on; d.listView.setItemChecked(k, on) }
+                    b.text = if (on) "Untick all" else "Tick all"
+                }
+            }
     }
 
     /** Removes a link from the paste box once its download has started. */
@@ -1660,6 +1808,11 @@ class MainActivity : Activity() {
             busy -> "Update engine (after downloads finish)"
             else -> "Update engine"
         }, "Gets the newest site support (yt-dlp)", null, ready && !updating && !busy) { update() }
+        val signed = Cookies.sites(this)
+        entry(G_OPEN, "Sign in to a site", if (signed.isEmpty()) "For private videos, or when a site asks for a login"
+            else "Signed in: " + signed.joinToString(", "), null, true) { chooseSite() }
+        entry(G_CLOSE, "Sign out of all sites", "Forgets every login VidGrab saved",
+            signed.size, signed.isNotEmpty()) { signOut() }
         entry(G_CLEAR_ALL, "Remove all", "Empties the list. Saved files are kept.",
             items.size, items.isNotEmpty()) { removeAll() }
 
@@ -1674,6 +1827,52 @@ class MainActivity : Activity() {
             w.decorView.setPadding(0, 0, 0, 0)
         }
         d.show()
+    }
+
+    // ---------- signing in to sites ----------
+    private fun chooseSite() {
+        val sites = listOf(
+            "YouTube" to "https://accounts.google.com/ServiceLogin?service=youtube&continue=https%3A%2F%2Fwww.youtube.com%2F",
+            "Instagram" to "https://www.instagram.com/accounts/login/",
+            "Facebook" to "https://m.facebook.com/login/",
+            "X (Twitter)" to "https://x.com/i/flow/login",
+            "TikTok" to "https://www.tiktok.com/login",
+            "Vimeo" to "https://vimeo.com/log_in",
+            "Another site..." to "")
+        AlertDialog.Builder(this, dialogTheme()).setTitle("Sign in to")
+            .setItems(sites.map { it.first }.toTypedArray()) { _, k ->
+                if (sites[k].second.isEmpty()) askSite() else openSignIn(sites[k].second)
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun askSite() {
+        val e = EditText(this).apply {
+            hint = "example.com"
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+            setSingleLine()
+        }
+        val box = FrameLayout(this)
+        box.setPadding(px(S5), px(S2), px(S5), 0)
+        box.addView(e)
+        AlertDialog.Builder(this, dialogTheme()).setTitle("Site to sign in to").setView(box)
+            .setPositiveButton("Open") { _, _ ->
+                val t = e.text.toString().trim()
+                if (t.isNotEmpty()) openSignIn(if (t.startsWith("http")) t else "https://$t")
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun openSignIn(u: String) =
+        startActivityForResult(Intent(this, SignInActivity::class.java).putExtra("url", u), 4)
+
+    private fun signOut() {
+        confirm("Sign out of every site? VidGrab forgets all the logins it saved.") {
+            Cookies.clear(this)
+            tell("Signed out of all sites.")
+        }
     }
 
     private fun persist() {
@@ -1766,6 +1965,7 @@ class MainActivity : Activity() {
         for (a in sel) {
             list.removeView(a.box)
             items.remove(a)
+            if (!a.busy) Notifier.clear(this, a)    // a running one clears its own when it stops
         }
         persist()
         refreshService()
@@ -1926,7 +2126,7 @@ class MainActivity : Activity() {
                     else -> "Could not optimize (file left unchanged) - tap here for details"
                 }, if (ok) C_OK else C_DANGER)
             }
-            runOnUiThread { tell("Optimized $fixed of ${sel.size} item(s).") }
+            onUi { h -> h.tell("Optimized $fixed of ${sel.size} item(s).") }
         }
     }
 
@@ -1961,7 +2161,7 @@ class MainActivity : Activity() {
             var ok = 0
             val errs = StringBuilder()
             for ((n, u) in uris.withIndex()) {
-                runOnUiThread { status.text = "Optimizing video ${n + 1} of ${uris.size}..." }
+                onUi { h -> h.status.text = "Optimizing video ${n + 1} of ${uris.size}..." }
                 val name = (displayName(u) ?: "video.mp4").replace("/", "_")
                 val ext = name.substringAfterLast('.', "mp4")
                 val base = name.substringBeforeLast('.', name)
@@ -1982,9 +2182,9 @@ class MainActivity : Activity() {
                 dir.deleteRecursively()
             }
             if (errs.isNotEmpty()) checkErr = errs.toString().trim()
-            runOnUiThread {
+            onUi { h ->
                 val saved = "Saved as \"... (optimized)\" in your download folder; the originals are untouched."
-                tell(when {
+                h.tell(when {
                     ok == uris.size -> "Optimized ${uris.size} video(s). $saved"
                     ok > 0 -> "Optimized $ok of ${uris.size} video(s). $saved Tap here for details on the others."
                     else -> "Could not optimize. Tap here for details."
@@ -2012,6 +2212,7 @@ class MainActivity : Activity() {
         val dir = dirFor(a, choice).apply { mkdirs() }
         if (!running.add(dir.name)) { setState(a, "Already running in the background", C_WARN); return }
         removeFromInput(a.url)
+        Notifier.clear(this, a)              // an old "Paused" / "Failed" notification
         a.runDir = dir
         a.busy = true
         a.cancelled = false
@@ -2042,6 +2243,7 @@ class MainActivity : Activity() {
             a.pct = -1
             a.bar.progress = 0
             setState(a, "Stopped")
+            Notifier.clear(this, a)
         }
         refreshButtons(a)
     }
@@ -2109,9 +2311,14 @@ class MainActivity : Activity() {
         a.state.setCompoundDrawablesRelative(mark, null, null, null)
     }
 
-    private fun ui(a: Item, text: String, tone: Int = C_MUTED) = runOnUiThread {
-        if (a.pct >= 0) a.bar.progress = a.pct
-        setState(a, text, tone)
+    /** Updates an item's card from background work (on whichever screen is current) and its notification. */
+    private fun ui(a: Item, text: String, tone: Int = C_MUTED) {
+        a.note = text
+        onUi { h ->
+            if (a.pct >= 0) a.bar.progress = a.pct
+            h.setState(a, text, tone)
+            if (a.busy) Notifier.progress(h, a, text)
+        }
     }
 
     private fun fmt(s: Long) = if (s >= 3600) "%d:%02d:%02d".format(s / 3600, s % 3600 / 60, s % 60)
@@ -2128,9 +2335,10 @@ class MainActivity : Activity() {
 
     private fun pausedText(a: Item) = at(a) + "Paused - tap Start to continue"
 
-    private fun buildRequest(url: String, choice: Int, dir: File): YoutubeDLRequest {
+    private fun buildRequest(url: String, choice: Int, dir: File, cookies: File?): YoutubeDLRequest {
         val r = YoutubeDLRequest(url)
         r.addOption("--no-playlist")
+        if (cookies != null) r.addOption("--cookies", cookies.absolutePath)   // signed-in sites (More > Sign in)
         r.addOption("--no-mtime")
         r.addOption("--continue")
         r.addOption("--retries", "3")
@@ -2251,12 +2459,14 @@ class MainActivity : Activity() {
                     a.pid = dir.name + "-" + System.nanoTime()
                     ui(a, if (a.pct >= 0) "${a.pct}% - resuming..." else "Starting...", C_PRIMARY)
                     a.proc = true
+                    val jar = Cookies.forRun(this)
                     try {
-                        YoutubeDL.getInstance().execute(buildRequest(a.url, choice, dir), a.pid) { _, _, line ->
+                        YoutubeDL.getInstance().execute(buildRequest(a.url, choice, dir, jar), a.pid) { _, _, line ->
                             if (onLine(a, line)) tries = 0
                         }
                     } finally {
                         a.proc = false
+                        jar?.delete()
                     }
                     // A killed process can still end "normally"; never treat its leftovers as a finished file.
                     if (a.netKill || a.paused || a.cancelled) throw Exception("interrupted")
@@ -2276,12 +2486,12 @@ class MainActivity : Activity() {
                     a.pct = 100
                     a.done = true
                     a.err = if (optErr.isEmpty()) "" else "Saved, but optimizing failed:\n\n$optErr"
-                    runOnUiThread {
+                    onUi { h ->
                         a.bar.progress = 100
-                        if (optErr.isEmpty()) setState(a, "Done - saved", C_OK)
-                        else setState(a, "Done - saved (not optimized - tap here for details)", C_WARN)
-                        persist()
-                        updateCounts()
+                        if (optErr.isEmpty()) h.setState(a, "Done - saved", C_OK)
+                        else h.setState(a, "Done - saved (not optimized - tap here for details)", C_WARN)
+                        h.persist()
+                        h.updateCounts()
                     }
                     return
                 } catch (e: Exception) {
@@ -2308,10 +2518,11 @@ class MainActivity : Activity() {
             a.runDir = null
             running.remove(dir.name)
             if (a.cancelled) { dir.deleteRecursively(); a.pct = -1 }
-            runOnUiThread {
-                if (a.cancelled) { a.bar.progress = 0; setState(a, "Stopped") }
-                refreshButtons(a)
-                refreshService()
+            Notifier.finished(applicationContext, a)
+            onUi { h ->
+                if (a.cancelled) { a.bar.progress = 0; h.setState(a, "Stopped") }
+                h.refreshButtons(a)
+                h.refreshService()
             }
         }
     }
@@ -2368,15 +2579,15 @@ class MainActivity : Activity() {
                 val r = YoutubeDL.getInstance().updateYoutubeDL(application, YoutubeDL.UpdateChannel.NIGHTLY)
                 val v = YoutubeDL.getInstance().versionName(application)
                 prefs.edit().putLong("engineChecked", System.currentTimeMillis()).apply()
-                runOnUiThread {
-                    status.text = if (r == YoutubeDL.UpdateStatus.ALREADY_UP_TO_DATE)
+                onUi { h ->
+                    h.status.text = if (r == YoutubeDL.UpdateStatus.ALREADY_UP_TO_DATE)
                         "Already up to date ($v)" else "Updated to $v"
                 }
             } catch (e: Exception) {
-                runOnUiThread { status.text = "Update failed: " + why(e).first }
+                onUi { h -> h.status.text = "Update failed: " + why(e).first }
             } finally {
                 updating = false
-                runOnUiThread { refreshChip() }
+                onUi { h -> h.refreshChip() }
             }
         }.start()
     }
