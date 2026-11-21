@@ -88,6 +88,7 @@ class MainActivity : Activity() {
         @Volatile var peak = 0.0          // best speed seen before an interruption (bytes/s)
         @Volatile var peakOnWifi = false
         @Volatile var slowRestarts = 0
+        @Volatile var err = ""            // full text of the last failure, shown when the status is tapped
         var done = false
         val files = mutableListOf<String>()
     }
@@ -102,6 +103,7 @@ class MainActivity : Activity() {
     private lateinit var empty: TextView
     private lateinit var prefs: SharedPreferences
     @Volatile private var updating = false
+    @Volatile private var checkErr = ""                           // details of the last failed link check
     private var syncing = false                                   // updating "Select all" from code
     private val imgPool = Executors.newFixedThreadPool(2)         // thumbnails
     private val analyzer = Executors.newSingleThreadExecutor()
@@ -298,6 +300,7 @@ class MainActivity : Activity() {
             setTextColor(Color.WHITE)
             background = bg(C_GLASS, 12)
             setPadding(px(12), px(9), px(12), px(9))
+            setOnClickListener { if (checkErr.isNotEmpty()) showDetails("Link check", checkErr) }
         }
         add(root, status, 8)
 
@@ -402,15 +405,36 @@ class MainActivity : Activity() {
             try {
                 YoutubeDL.getInstance().init(application)
                 FFmpeg.getInstance().init(application)
+                autoUpdate()
                 ready = true
                 runOnUiThread {
                     status.text ="Ready (engine ${YoutubeDL.getInstance().versionName(application)}). Paste links above."
                     autoCheck()
                 }
             } catch (e: Exception) {
-                runOnUiThread { status.text = "Could not start the download engine" }
+                checkErr = rawError(e)
+                runOnUiThread { status.text = "Could not start the download engine. Tap here for details." }
             }
         }.start()
+    }
+
+    /**
+     * Sites change often and an outdated engine stops working with them (the cause of "everything fails"
+     * after a reinstall), so check for a new yt-dlp once a day at startup. It is a small download (~3 MB).
+     */
+    private fun autoUpdate() {
+        val last = prefs.getLong("engineChecked", 0L)
+        if (System.currentTimeMillis() - last < 24 * 60 * 60 * 1000L || !online()) return
+        updating = true
+        runOnUiThread { status.text = "Updating the download engine..." }
+        try {
+            YoutubeDL.getInstance().updateYoutubeDL(application, YoutubeDL.UpdateChannel.NIGHTLY)
+            prefs.edit().putLong("engineChecked", System.currentTimeMillis()).apply()
+        } catch (_: Exception) {
+            // keep the current engine; it is tried again on the next start
+        } finally {
+            updating = false
+        }
     }
 
     override fun onPause() { super.onPause(); persist() }
@@ -470,12 +494,32 @@ class MainActivity : Activity() {
     /** Online, and on Wi-Fi unless the user allowed mobile data. */
     private fun canDownload() = online() && (!wifiOnly() || onWifiNow())
 
+    /** The full error text (yt-dlp's stderr and any causes), for the details dialog. */
+    private fun rawError(e: Throwable): String {
+        val sb = StringBuilder()
+        var c: Throwable? = e
+        while (c != null) { sb.append(c.message ?: c.javaClass.simpleName).append('\n'); c = c.cause }
+        return sb.toString().trim()
+    }
+
+    /** Shows an error in full, with the engine version, and lets the user copy it. */
+    private fun showDetails(title: String, text: String) {
+        val engine = try { YoutubeDL.getInstance().versionName(application) } catch (_: Exception) { null }
+        val full = ("Engine: " + (engine ?: "unknown") + "\n\n" + text).take(6000)
+        AlertDialog.Builder(this).setTitle(title).setMessage(full)
+            .setPositiveButton("Copy") { _, _ ->
+                getSystemService(ClipboardManager::class.java)
+                    .setPrimaryClip(android.content.ClipData.newPlainText("VidGrab error", full))
+                status.text = "Error details copied."
+            }
+            .setNegativeButton("Close", null)
+            .show()
+    }
+
     /** Returns a short readable cause, and whether it is a connection problem (worth retrying). */
     private fun why(e: Throwable): Pair<String, Boolean> {
         if (!online()) return "No internet connection" to true
-        var raw = ""
-        var c: Throwable? = e
-        while (c != null) { raw += " " + (c.message ?: ""); c = c.cause }
+        val raw = rawError(e)
         val t = raw.lowercase()
         fun has(vararg k: String) = k.any { it in t }
         return when {
@@ -495,8 +539,10 @@ class MainActivity : Activity() {
                 "network is unreachable", "unable to download", "urlopen error", "ssl", "eof occurred", "incomplete download") ->
                 "Connection interrupted" to true
             else -> {
-                val d = Regex("ERROR:\\s*([^\\n]{1,100})").find(raw)?.groupValues?.get(1)
-                (if (d != null) "Download failed: $d" else "Download failed (unknown reason)") to false
+                // yt-dlp's own "ERROR: ..." line, else the last meaningful line (e.g. a Python error)
+                val d = Regex("ERROR:\\s*([^\\n]{1,120})").find(raw)?.groupValues?.get(1)
+                    ?: raw.lines().map { it.trim() }.lastOrNull { it.isNotEmpty() && !it.startsWith("WARNING") }?.take(120)
+                (if (!d.isNullOrEmpty()) "Download failed: $d" else "Download failed (unknown reason)") to false
             }
         }
     }
@@ -554,6 +600,7 @@ class MainActivity : Activity() {
         checking.addAll(fresh)
         analyzer.execute {
             val problems = mutableListOf<String>()
+            val details = StringBuilder()
             var added = 0
             for ((n, u) in fresh.withIndex()) {
                 runOnUiThread { status.text = "Checking link ${n + 1} of ${fresh.size}..." }
@@ -600,11 +647,14 @@ class MainActivity : Activity() {
                     if (!net) failed.add(u)
                     checking.remove(u)
                     problems.add("Link ${n + 1}: $msg")
+                    details.append(u).append('\n').append(rawError(e)).append("\n\n")
                 }
             }
+            checkErr = details.toString().trim()
             runOnUiThread {
                 val head = if (added > 0) "Pick a resolution for each video, then tap Download." else ""
-                status.text = (listOf(head) + problems).filter { it.isNotEmpty() }.joinToString("\n")
+                val tail = if (problems.isNotEmpty()) "Tap here for details." else ""
+                status.text = (listOf(head) + problems + tail).filter { it.isNotEmpty() }.joinToString("\n")
             }
         }
     }
@@ -662,7 +712,10 @@ class MainActivity : Activity() {
         quality.addView(a.spinner, LinearLayout.LayoutParams(0, wrap, 1f).apply { leftMargin = px(8) })
 
         a.bar = bar()
-        a.state = TextView(this).apply { text = "Ready to download"; textSize = 13f; setTextColor(C_MUTED) }
+        a.state = TextView(this).apply {
+            text = "Ready to download"; textSize = 13f; setTextColor(C_MUTED)
+            setOnClickListener { if (a.err.isNotEmpty()) showDetails(a.title, a.err) }
+        }
         // The two buttons change role: Start/Pause + Stop while unfinished, Open + Share when done.
         a.toggle = btn("Start", PRIMARY) {
             when {
@@ -1039,6 +1092,7 @@ class MainActivity : Activity() {
     // ---------- downloading ----------
     private fun downloadSelected() {
         if (items.isEmpty()) { status.text = "Paste links above first"; return }
+        if (!ready) { status.text = "The download engine is still starting - try again in a moment"; return }
         val sel = items.filter { it.check.isChecked }
         if (sel.isEmpty()) { status.text = "Tick the videos you want to download"; return }
         sel.forEach { startItem(it) }
@@ -1048,6 +1102,8 @@ class MainActivity : Activity() {
 
     private fun startItem(a: Item) {
         if (a.busy || a.done) return
+        if (!ready) { setState(a, "The download engine is still starting - try again in a moment", C_WARN); return }
+        a.err = ""
         val choice = choiceOf(a)
         val dir = dirFor(a, choice).apply { mkdirs() }
         if (!running.add(dir.name)) { setState(a, "Already running in the background", C_WARN); return }
@@ -1312,7 +1368,8 @@ class MainActivity : Activity() {
                         if (online()) Thread.sleep(3000)
                         continue
                     }
-                    ui(a, at(a) + "$msg. Tap Start to retry - progress is kept.", C_DANGER)
+                    a.err = rawError(e)
+                    ui(a, at(a) + "$msg. Tap Start to retry (progress is kept) or tap here for details.", C_DANGER)
                     return
                 }
             }
@@ -1362,6 +1419,7 @@ class MainActivity : Activity() {
             try {
                 val r = YoutubeDL.getInstance().updateYoutubeDL(application, YoutubeDL.UpdateChannel.NIGHTLY)
                 val v = YoutubeDL.getInstance().versionName(application)
+                prefs.edit().putLong("engineChecked", System.currentTimeMillis()).apply()
                 runOnUiThread {
                     status.text = if (r == YoutubeDL.UpdateStatus.ALREADY_UP_TO_DATE)
                         "Already up to date ($v)" else "Updated to $v"

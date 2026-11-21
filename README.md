@@ -15,7 +15,8 @@ VidGrab bundles [yt-dlp](https://github.com/yt-dlp/yt-dlp) and FFmpeg through th
 - **Background downloads.** A foreground service with a notification and a wake lock keeps downloads running when the app is in the background. Pressing *Back* during a download sends the app to the background instead of closing it.
 - **Optimize.** FFmpeg remuxes the file without re-encoding. This fixes timestamps, drops corrupt packets and moves the MP4 index to the front ("faststart") so the video starts playing faster and seeks better. It can run automatically after each download, later on downloaded items, or on any video already on the phone (saved as a new "(optimized)" copy).
 - **Choose where files go.** The default is `Download/VidGrab`. You can pick any folder through the system folder picker.
-- **Engine updates.** *Update engine* downloads the latest yt-dlp build without updating the app.
+- **Engine updates.** The app checks for a new yt-dlp once a day at startup (about 3 MB), because sites change often and an outdated engine stops working with them. *More → Update engine* updates it on demand.
+- **Error details.** Tap a red error message, or the status bubble after a failed link check, to see the full error text and the engine version, with a *Copy* button.
 - **List is remembered.** The list of items, their chosen resolution and their saved files are kept between launches.
 
 ## Requirements
@@ -68,7 +69,9 @@ Everything else is in the **More** menu in the bottom bar:
 | Optimize a video from my phone | Picks videos from your storage and saves optimized copies. |
 | Update engine | Updates yt-dlp to the newest (nightly) build. Not available while downloads are running. |
 
-If a site stops working, try **Update engine** first. Sites change often, and yt-dlp is updated to keep up.
+If a site stops working, try **More → Update engine** first. Sites change often, and yt-dlp is updated to keep up.
+
+> **Installing a new build:** each CI build is signed with a new temporary debug key, so Android won't install it over the previous one. You have to uninstall first, which also clears the list and the updated engine. The app updates the engine again on its next start.
 
 ## Permissions
 
@@ -96,8 +99,8 @@ app/src/main/
 
 Main dependencies:
 
-- `io.github.junkfood02.youtubedl-android:library:0.17.4` (yt-dlp + Python runtime)
-- `io.github.junkfood02.youtubedl-android:ffmpeg:0.17.4`
+- `io.github.junkfood02.youtubedl-android:library:0.18.1` (yt-dlp 2025.11.12, Python 3.12, and the QuickJS JavaScript engine that YouTube now requires)
+- `io.github.junkfood02.youtubedl-android:ffmpeg:0.18.1`
 
 ## How it works
 
