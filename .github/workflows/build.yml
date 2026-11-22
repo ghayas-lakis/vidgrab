@@ -2,26 +2,27 @@ name: Build APK
 on:
   push:
   workflow_dispatch:
+  # Every Monday: sites change all the time, so this shows when one breaks even without new commits.
+  schedule:
+    - cron: "0 6 * * 1"
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: 17
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: 8.7
+      # Signs with the fixed key from the VIDGRAB_KEYSTORE secret when it is set (see README).
       - name: Build
-        run: |
-          set -o pipefail
-          gradle assembleDebug --no-daemon 2>&1 | tee build.log
-      - name: Explain the failure
-        if: failure()
-        run: python3 ci/annotate.py build build.log
-      - uses: actions/upload-artifact@v4
+        env:
+          VIDGRAB_KEYSTORE_B64: ${{ secrets.VIDGRAB_KEYSTORE }}
+        run: bash ci/build.sh
+      - uses: actions/upload-artifact@v7
         with:
           name: VidGrab-apk
           path: app/build/outputs/apk/debug/*.apk
@@ -32,17 +33,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 75
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Enable KVM (hardware acceleration for the emulator)
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: 17
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: 8.7
       - name: Run end-to-end tests on an emulator
@@ -57,9 +58,8 @@ jobs:
           emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           # The YouTube test only warns (CI's IPs are often blocked by YouTube), so run it second.
           script: bash ci/e2e.sh core; c=$?; bash ci/e2e.sh youtube; exit $c
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: e2e-results
           path: ci-out/
-
