@@ -59,6 +59,8 @@ dependencies {
     // 2024 yt-dlp that YouTube and other sites no longer accept. The engine also updates itself daily.
     implementation("io.github.junkfood02.youtubedl-android:library:0.18.1")
     implementation("io.github.junkfood02.youtubedl-android:ffmpeg:0.18.1")
+    // The browser's proxy (Settings > Proxy / VPN): ProxyController
+    implementation("androidx.webkit:webkit:1.8.0")
 
     // End-to-end tests on an emulator (app/src/androidTest, run by CI)
     androidTestImplementation("androidx.test:runner:1.5.2")

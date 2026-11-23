@@ -74,7 +74,7 @@ import java.util.concurrent.atomic.AtomicInteger
  * Color tokens for one theme. `accent` is for text, icons and progress; `fill` is the background of
  * filled buttons (it keeps white text readable in both themes). ok / warn / danger are the status tones.
  */
-private class Palette(
+internal class Palette(
     val dark: Boolean,
     val bg: Int, val surface: Int, val surface2: Int, val outline: Int, val outlineStrong: Int,
     val text: Int, val muted: Int, val subtle: Int,
@@ -83,9 +83,9 @@ private class Palette(
     val ripple: Int, val disabledBg: Int, val disabledFg: Int,
 )
 
-private fun hex(h: String) = Color.parseColor(h)
+internal fun hex(h: String) = Color.parseColor(h)
 
-private val LIGHT = Palette(
+internal val LIGHT = Palette(
     dark = false,
     bg = hex("#F4F6FA"), surface = hex("#FFFFFF"), surface2 = hex("#EEF1F7"), outline = hex("#E3E7EF"),
     outlineStrong = hex("#C3CAD7"),
@@ -95,7 +95,7 @@ private val LIGHT = Palette(
     ripple = Color.argb(31, 14, 23, 38), disabledBg = hex("#E9ECF2"), disabledFg = hex("#A3ABB9"),
 )
 
-private val DARK = Palette(
+internal val DARK = Palette(
     dark = true,
     bg = hex("#0B0E14"), surface = hex("#151A23"), surface2 = hex("#1D2330"), outline = hex("#252C3A"),
     outlineStrong = hex("#3A4354"),
@@ -106,78 +106,84 @@ private val DARK = Palette(
 )
 
 // spacing scale (dp)
-private const val S1 = 4
-private const val S2 = 8
-private const val S3 = 12
-private const val S4 = 16
-private const val S5 = 20
+internal const val S1 = 4
+internal const val S2 = 8
+internal const val S3 = 12
+internal const val S4 = 16
+internal const val S5 = 20
 // corner radii (dp)
-private const val R_SM = 10
-private const val R_MD = 14
-private const val R_LG = 20
-private const val R_PILL = 100
+internal const val R_SM = 10
+internal const val R_MD = 14
+internal const val R_LG = 20
+internal const val R_PILL = 100
 // type scale (sp)
-private const val T_DISPLAY = 21f
-private const val T_TITLE = 16f
-private const val T_BODY = 14f
-private const val T_LABEL = 13f
-private const val T_CAPTION = 12f
-private const val T_OVERLINE = 11f
+internal const val T_DISPLAY = 21f
+internal const val T_TITLE = 16f
+internal const val T_BODY = 14f
+internal const val T_LABEL = 13f
+internal const val T_CAPTION = 12f
+internal const val T_OVERLINE = 11f
 
-private val MEDIUM: Typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-private val BOLD: Typeface = Typeface.create("sans-serif", Typeface.BOLD)
+internal val MEDIUM: Typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+internal val BOLD: Typeface = Typeface.create("sans-serif", Typeface.BOLD)
 
 // button kinds
-private const val FILLED = 0
-private const val TONAL = 1
-private const val DANGER = 2
-private const val GHOST = 3
+internal const val FILLED = 0
+internal const val TONAL = 1
+internal const val DANGER = 2
+internal const val GHOST = 3
 
 // status tones (stored per item, so a theme change can re-color them)
-private const val K_MUTED = 0
-private const val K_ACTIVE = 1
-private const val K_WARN = 2
-private const val K_ERROR = 3
-private const val K_OK = 4
+internal const val K_MUTED = 0
+internal const val K_ACTIVE = 1
+internal const val K_WARN = 2
+internal const val K_ERROR = 3
+internal const val K_OK = 4
 
 // Marks our own progress lines (see --progress-template in buildRequest).
-private const val PROG = "VGP|"
+internal const val PROG = "VGP|"
 // The "Quality for new links" choices (Item.choices codes: height, 0 = best, -1 = audio only).
-private val QUALITIES = listOf(0 to "Best available", 1080 to "1080p", 720 to "720p", 480 to "480p",
+internal val QUALITIES = listOf(0 to "Best available", 1080 to "1080p", 720 to "720p", 480 to "480p",
     360 to "360p", -1 to "Audio only (MP3)")
 // Start of optimize()'s answer for audio and other non-video files (expected, not an error).
-private const val NOT_VIDEO = "Not a video file"
+internal const val NOT_VIDEO = "Not a video file"
+// Status of a video from the browser that waits for the rest of its batch, to be merged with them.
+private const val WAIT_MERGE = "Downloaded - merged with the others when all are done"
 
 // ---------- icons ----------
-private const val G_PLAY = 1
-private const val G_PAUSE = 2
-private const val G_STOP = 3
-private const val G_SHARE = 4
-private const val G_OPEN = 5
-private const val G_PASTE = 6
-private const val G_CLOSE = 7
-private const val G_FOLDER = 8
-private const val G_WIFI = 9
-private const val G_SPARK = 10
-private const val G_DOWNLOAD = 11
-private const val G_MORE = 12
-private const val G_TRASH = 13
-private const val G_CHECK = 14
-private const val G_DONE_ALL = 15
-private const val G_REFRESH = 16
-private const val G_PHONE = 17
-private const val G_ALERT = 18
-private const val G_INFO = 19
-private const val G_CHEVRON_DOWN = 20
-private const val G_CHEVRON_RIGHT = 21
-private const val G_CLEAR_ALL = 22
-private const val G_VIDEO = 23
+internal const val G_PLAY = 1
+internal const val G_PAUSE = 2
+internal const val G_STOP = 3
+internal const val G_SHARE = 4
+internal const val G_OPEN = 5
+internal const val G_PASTE = 6
+internal const val G_CLOSE = 7
+internal const val G_FOLDER = 8
+internal const val G_WIFI = 9
+internal const val G_SPARK = 10
+internal const val G_DOWNLOAD = 11
+internal const val G_MORE = 12
+internal const val G_TRASH = 13
+internal const val G_CHECK = 14
+internal const val G_DONE_ALL = 15
+internal const val G_REFRESH = 16
+internal const val G_PHONE = 17
+internal const val G_ALERT = 18
+internal const val G_INFO = 19
+internal const val G_CHEVRON_DOWN = 20
+internal const val G_CHEVRON_RIGHT = 21
+internal const val G_CLEAR_ALL = 22
+internal const val G_VIDEO = 23
+internal const val G_BACK = 24
+internal const val G_FORWARD = 25
+internal const val G_GLOBE = 26
+internal const val G_MERGE = 27
 
 /**
  * Simple line icons drawn on a 24x24 grid, scaled to the bounds. They need no resources, stay sharp
  * at any size and follow tint lists, so buttons grey them out when disabled.
  */
-private class Glyph(private val kind: Int, private val base: Int, private val sz: Int = -1,
+internal class Glyph(private val kind: Int, private val base: Int, private val sz: Int = -1,
                     private val weight: Float = 2f) : Drawable() {
     private val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         strokeCap = Paint.Cap.ROUND
@@ -339,6 +345,28 @@ private class Glyph(private val kind: Int, private val base: Int, private val sz
                 path.moveTo(10f, 9f); path.lineTo(15.2f, 12f); path.lineTo(10f, 15f); path.close()
                 cv.drawPath(path, p)
             }
+            G_BACK -> {
+                cv.drawLine(19f, 12f, 5.5f, 12f, p)
+                path.moveTo(11f, 6f); path.lineTo(5f, 12f); path.lineTo(11f, 18f)
+                cv.drawPath(path, p)
+            }
+            G_FORWARD -> {
+                cv.drawLine(5f, 12f, 18.5f, 12f, p)
+                path.moveTo(13f, 6f); path.lineTo(19f, 12f); path.lineTo(13f, 18f)
+                cv.drawPath(path, p)
+            }
+            G_GLOBE -> {
+                cv.drawCircle(12f, 12f, 9f, p)
+                r.set(8f, 3f, 16f, 21f); cv.drawOval(r, p)
+                cv.drawLine(3f, 12f, 21f, 12f, p)
+            }
+            G_MERGE -> {
+                path.moveTo(5f, 4f); path.lineTo(5f, 8f); path.quadTo(5f, 12f, 12f, 13f)
+                path.moveTo(19f, 4f); path.lineTo(19f, 8f); path.quadTo(19f, 12f, 12f, 13f)
+                path.lineTo(12f, 20f)
+                path.moveTo(8.5f, 16.5f); path.lineTo(12f, 20f); path.lineTo(15.5f, 16.5f)
+                cv.drawPath(path, p)
+            }
         }
         cv.restore()
     }
@@ -414,14 +442,27 @@ class MainActivity : Activity() {
         @Volatile var slowRestarts = 0
         @Volatile var err = ""            // full text of the last failure, shown when the status is tapped
         @Volatile var note = ""           // the last status line set by the download work (for its notification)
+        @Volatile var batch = ""          // id of the Batch this video is merged with ("" = saved on its own)
+        @Volatile var part = ""           // downloaded file waiting in app storage to be merged
         var done = false
         val files = mutableListOf<String>()
+    }
+
+    /**
+     * Videos sent from the browser with "Merge": once every one of them is downloaded, they are joined (in
+     * this order) into one video and the separate downloads are deleted. A link that leaves the list (removed,
+     * or it could not be checked) leaves the batch, so the others are still merged.
+     */
+    class Batch(val id: String, urls: List<String>) {
+        val urls = CopyOnWriteArrayList(urls)
+        @Volatile var merging = false
     }
 
     private lateinit var input: EditText
     private lateinit var clearBtn: Button
     private lateinit var folderLabel: TextView
     private lateinit var qualityLabel: TextView
+    private lateinit var proxyLabel: TextView
     private lateinit var summary: TextView
     private lateinit var list: LinearLayout
     private lateinit var status: TextView
@@ -477,6 +518,28 @@ class MainActivity : Activity() {
         private var netOn = false
         /** The screen on display (or the last one shown): background work reports its results there. */
         @Volatile private var host: MainActivity? = null
+
+        // ---------- videos sent from the browser ----------
+        private val batches = ConcurrentHashMap<String, Batch>()
+        private val merger = Executors.newSingleThreadExecutor()       // joining videos (can take minutes)
+        private val merging = AtomicInteger(0)                         // merges running (keep the service on)
+        private val pendingBrowser = CopyOnWriteArrayList<Pair<List<String>, Boolean>>()   // sent before the engine was ready
+        /**
+         * The page a direct video stream was found on, and the browser's user agent: such links are often
+         * refused without them. Only used for streams and unknown sites (yt-dlp sets its own for known sites).
+         */
+        internal val referers = ConcurrentHashMap<String, String>()
+        @Volatile internal var browserUa = ""
+
+        /**
+         * The browser's "Download": adds the links to the list and starts them. merge = join them into one
+         * video when all are done. Returns false when no VidGrab screen exists to take them.
+         */
+        internal fun fromBrowser(urls: List<String>, merge: Boolean): Boolean {
+            val h = host ?: return false
+            h.runOnUiThread { (host ?: h).addFromBrowser(urls, merge) }
+            return true
+        }
 
         // When the connection drops or changes, stop running downloads at once so they never keep using a
         // dead connection; the work loop resumes them from the partial file on a usable network.
@@ -944,6 +1007,9 @@ class MainActivity : Activity() {
         lt.addView(label("Add links", T_TITLE, pal.text, MEDIUM))
         lt.addView(subText("Checked automatically as you paste"))
         linksHead.addView(lt, lp(0, WRAP, 1f))
+        linksHead.addView(btn("Browse", TONAL, G_GLOBE, 38) { openBrowser() }.apply {
+            setPadding(px(12), 0, px(14), 0)
+        }, lp(WRAP, px(38)).apply { marginEnd = px(S2) })
         linksHead.addView(btn("Paste", FILLED, G_PASTE, 38) { pasteClipboard() }, lp(WRAP, px(38)))
         add(links, linksHead)
         input = EditText(this).apply {
@@ -1028,6 +1094,19 @@ class MainActivity : Activity() {
         val qRow = settingRow(G_VIDEO, "Quality for new links", qualityLabel, qChange)
         qRow.setOnClickListener { chooseQuality() }
         add(settings, qRow)
+        addDivider(settings, 60)
+        proxyLabel = subText(proxyText()).apply {
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+        }
+        val pChange = label("Change", T_LABEL, pal.accent, MEDIUM)
+        val pChev = Glyph(G_CHEVRON_RIGHT, pal.accent)
+        pChev.setBounds(0, 0, px(16), px(16))
+        pChange.setCompoundDrawablesRelative(null, null, pChev, null)
+        pChange.compoundDrawablePadding = px(2)
+        val pRow = settingRow(G_GLOBE, "Proxy / VPN", proxyLabel, pChange)
+        pRow.setOnClickListener { chooseProxy() }
+        add(settings, pRow)
         add(root, settings)
 
         // video list: heading with count + "Select all", empty state, then one card per video
@@ -1071,7 +1150,7 @@ class MainActivity : Activity() {
             setImageDrawable(Glyph(G_DOWNLOAD, pal.accent, px(26), 2.2f))
         }, lp(px(56), px(56)))
         emptyBox.addView(label("No videos yet", T_TITLE, pal.text, MEDIUM), lp(WRAP, WRAP).apply { topMargin = px(S3 + 2) })
-        emptyBox.addView(label("Paste a link above, or share one to VidGrab from any app.", T_LABEL, pal.muted).apply {
+        emptyBox.addView(label("Paste a link above, tap Browse to find videos on a site, or share a link to VidGrab from any app.", T_LABEL, pal.muted).apply {
             gravity = Gravity.CENTER
             setLineSpacing(px(2).toFloat(), 1f)
         }, lp(WRAP, WRAP).apply { topMargin = px(S1 + 2) })
@@ -1215,6 +1294,10 @@ class MainActivity : Activity() {
                 onUi { h ->
                     h.status.text = "Ready (engine ${YoutubeDL.getInstance().versionName(application)}). Paste links above."
                     h.autoCheck()
+                    val sent = pendingBrowser.toList()
+                    pendingBrowser.clear()
+                    for ((urls, merge) in sent) h.addFromBrowser(urls, merge)
+                    for (id in batches.keys.toList()) h.checkBatch(id)    // merges that waited for ffmpeg
                 }
             } catch (e: Exception) {
                 checkErr = rawError(e)
@@ -1257,7 +1340,7 @@ class MainActivity : Activity() {
     // Back keeps the app (and its downloads) alive in the background instead of closing it.
     @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
     override fun onBackPressed() {
-        if (items.any { it.busy }) moveTaskToBack(true) else super.onBackPressed()
+        if (items.any { it.busy } || merging.get() > 0) moveTaskToBack(true) else super.onBackPressed()
     }
 
     // Nothing to release: the list, the workers and the network watcher outlive this screen on purpose.
@@ -1427,6 +1510,14 @@ class MainActivity : Activity() {
             if (newly.any { n -> items.any { it.url == n } }) status.text = "That link is already in your list below."
             return
         }
+        checkLinks(fresh)
+    }
+
+    /**
+     * Checks links and adds a card for each video. auto = they came from the browser: each one starts
+     * downloading as soon as its card is there (and joins its merge batch, if any).
+     */
+    private fun checkLinks(fresh: List<String>, auto: Boolean = false) {
         status.text = "Checking ${fresh.size} link(s)..."
         checking.addAll(fresh)
         // Up to 3 links are checked at the same time, so a long list of links is ready much sooner.
@@ -1444,6 +1535,7 @@ class MainActivity : Activity() {
                     req.addOption("--flat-playlist")    // a playlist link: list its videos without checking each one
                     req.addOption("--socket-timeout", "20")
                     if (jar != null) req.addOption("--cookies", jar.absolutePath)
+                    netOptions(req, u)
                     val j = JSONObject(YoutubeDL.getInstance().execute(req).out)
                     if (j.optString("_type") == "playlist") {
                         val entries = playlistEntries(j)
@@ -1483,9 +1575,11 @@ class MainActivity : Activity() {
                     val item = Item(u, j.optString("title", u), labels, choices, j.optString("thumbnail", ""), meta)
                     onUi { h ->
                         if (items.none { it.url == u }) {
+                            if (auto) item.batch = batches.values.firstOrNull { u in it.urls }?.id ?: ""
                             h.addRow(item)
                             h.preselect(item)
                             item.check.isChecked = true
+                            if (auto) h.startItem(item)
                             h.persist()
                         }
                         checking.remove(u)
@@ -1495,6 +1589,8 @@ class MainActivity : Activity() {
                     val (msg, net) = why(e)
                     if (!net) failed.add(u)
                     checking.remove(u)
+                    // a merge batch goes on without this link
+                    if (auto) onUi { h -> for (b in batches.values.filter { u in it.urls }) h.checkBatch(b.id) }
                     problems.add(n to "Link ${n + 1}: $msg")
                     details.append(u).append('\n').append(rawError(e)).append("\n\n")
                 } finally {
@@ -1506,7 +1602,11 @@ class MainActivity : Activity() {
                         val probs = synchronized(problems) { problems.sortedBy { it.first }.map { it.second } }
                         val ok = added.get()
                         onUi { h ->
-                            val head = if (ok > 0) "Pick a quality for each video, or tick them all and tap Download." else ""
+                            val head = when {
+                                ok == 0 -> ""
+                                auto -> "The videos from the browser are downloading below."
+                                else -> "Pick a quality for each video, or tick them all and tap Download."
+                            }
                             val tail = if (probs.isNotEmpty()) "Tap here for details." else ""
                             h.status.text = (listOf(head) + probs + tail).filter { it.isNotEmpty() }.joinToString("\n")
                         }
@@ -1840,7 +1940,7 @@ class MainActivity : Activity() {
         val ticked = items.filter { it.check.isChecked }
         val tickedUnfinished = ticked.count { !it.done }
         val tickedWithFiles = ticked.count { it.files.isNotEmpty() }
-        val completed = items.count { it.done }
+        val completed = items.count { it.done && it.part.isEmpty() }
         val d = Dialog(this, if (pal.dark) android.R.style.Theme_DeviceDefault_Dialog_NoActionBar
             else android.R.style.Theme_DeviceDefault_Light_Dialog_NoActionBar)
         val sheet = LinearLayout(this)
@@ -2024,12 +2124,22 @@ class MainActivity : Activity() {
             put("url", a.url); put("title", a.title); put("thumb", a.thumb); put("meta", a.meta)
             put("labels", JSONArray(a.labels)); put("choices", JSONArray(a.choices))
             put("sel", a.spinner.selectedItemPosition); put("done", a.done); put("pct", a.pct)
-            put("files", JSONArray(a.files))
+            put("files", JSONArray(a.files)); put("batch", a.batch); put("part", a.part)
         })
-        prefs.edit().putString("items", arr.toString()).apply()
+        val bs = JSONArray()
+        for (b in batches.values) bs.put(JSONObject().apply { put("id", b.id); put("urls", JSONArray(b.urls.toList())) })
+        prefs.edit().putString("items", arr.toString()).putString("batches", bs.toString()).apply()
     }
 
     private fun restore() {
+        try {
+            val bs = JSONArray(prefs.getString("batches", null) ?: "[]")
+            for (k in 0 until bs.length()) {
+                val o = bs.getJSONObject(k)
+                val u = o.getJSONArray("urls")
+                batches[o.getString("id")] = Batch(o.getString("id"), List(u.length()) { u.getString(it) })
+            }
+        } catch (_: Exception) {}
         try {
             val arr = JSONArray(prefs.getString("items", null) ?: return)
             for (i in 0 until arr.length()) {
@@ -2042,14 +2152,24 @@ class MainActivity : Activity() {
                 a.done = o.optBoolean("done")
                 a.pct = o.optInt("pct", -1)
                 o.optJSONArray("files")?.let { f -> for (k in 0 until f.length()) a.files.add(f.getString(k)) }
+                a.batch = o.optString("batch", "").takeIf { batches.containsKey(it) } ?: ""
+                a.part = o.optString("part", "")
+                // A download waiting to be merged whose file is gone (or whose batch is): download it again.
+                if (a.part.isNotEmpty() && (a.batch.isEmpty() || !File(a.part).exists())) {
+                    a.part = ""
+                    if (a.files.isEmpty()) { a.done = false; a.pct = -1 }
+                }
                 addRow(a)
                 a.spinner.setSelection(o.optInt("sel"))
+                if (a.part.isNotEmpty()) setState(a, WAIT_MERGE, C_OK)
                 if (!a.done && a.pct >= 0) {
                     a.bar.progress = a.pct
                     setState(a, pausedText(a))
                 }
             }
         } catch (_: Exception) {}
+        // batches whose videos all finished before VidGrab was closed are merged now
+        for (id in batches.keys.toList()) handler.post { checkBatch(id) }
     }
 
     private fun confirm(msg: String, ok: () -> Unit) {
@@ -2065,7 +2185,7 @@ class MainActivity : Activity() {
     private fun dirFor(a: Item, choice: Int) = File(filesDir, "dl/" + Integer.toHexString((a.url + choice).hashCode()))
 
     private fun removeCompleted() {
-        val gone = items.filter { it.done }
+        val gone = items.filter { it.done && it.part.isEmpty() }     // not the ones waiting to be merged
         if (gone.isEmpty()) { tell("No finished downloads to remove yet"); return }
         dropFromList(gone)
         tell("Removed ${gone.size} completed item(s). Files are kept.")
@@ -2087,10 +2207,13 @@ class MainActivity : Activity() {
     /** Removes partial-download folders that no item in the list uses any more. */
     private fun sweepPartials() {
         val keep = items.flatMap { a -> a.choices.map { dirFor(a, it).name } }.toSet()
+        val keepBatches = batches.keys.toSet()
         analyzer.execute {
             File(filesDir, "dl").listFiles()?.forEach {
                 if (it.name !in keep && it.name !in running) it.deleteRecursively()
             }
+            // downloads of merge batches that no longer exist
+            File(filesDir, "merge").listFiles()?.forEach { if (it.name !in keepBatches) it.deleteRecursively() }
         }
     }
 
@@ -2105,14 +2228,22 @@ class MainActivity : Activity() {
 
     /** Takes items off the list (and off the screen). Call after discard() or when they are finished. */
     private fun dropFromList(sel: List<Item>) {
+        val touched = mutableSetOf<String>()
         for (a in sel) {
             list.removeView(a.box)
             items.remove(a)
             if (!a.busy) Notifier.clear(this, a)    // a running one clears its own when it stops
+            if (a.batch.isNotEmpty()) {
+                touched.add(a.batch)
+                // a download waiting to be merged; a merge that is running deletes its own files
+                if (a.part.isNotEmpty() && batches[a.batch]?.merging != true) File(a.part).delete()
+                batches[a.batch]?.let { b -> if (!b.merging) b.urls.remove(a.url) }
+            }
         }
         persist()
         refreshService()
         updateCounts()
+        for (id in touched) checkBatch(id)       // the rest of a batch may be ready to merge now
     }
 
     private fun removeUnfinished() {
@@ -2432,13 +2563,17 @@ class MainActivity : Activity() {
 
     /** Keeps the background service (and its notification) running while any download is active. */
     private fun refreshService() {
-        val n = items.count { it.busy }
+        val dl = items.count { it.busy }
+        val mg = merging.get()
+        val n = dl + mg
         try {
             val i = Intent(this, DownloadService::class.java)
             if (n > 0) {
                 if (!svcOn) { startForegroundService(i); svcOn = true }
+                val text = listOf(if (dl > 0) "$dl download(s) running" else "",
+                    if (mg > 0) "merging videos" else "").filter { it.isNotEmpty() }.joinToString(", ")
                 getSystemService(NotificationManager::class.java)
-                    .notify(1, DownloadService.build(this, "$n download(s) running"))
+                    .notify(1, DownloadService.build(this, text.replaceFirstChar { it.uppercase() }))
             } else if (svcOn) {
                 stopService(i)
                 svcOn = false
@@ -2493,6 +2628,7 @@ class MainActivity : Activity() {
         val r = YoutubeDLRequest(url)
         r.addOption("--no-playlist")
         if (cookies != null) r.addOption("--cookies", cookies.absolutePath)   // signed-in sites (More > Sign in)
+        netOptions(r, url)
         r.addOption("--no-mtime")
         r.addOption("--continue")
         r.addOption("--retries", "3")
@@ -2634,18 +2770,33 @@ class MainActivity : Activity() {
                         optErr = files.mapNotNull { optimize(it) }.filter { !it.startsWith(NOT_VIDEO) }
                             .joinToString("\n\n")
                     }
-                    val saved = files.map { save(it) }
+                    val b = batches[a.batch]
+                    if (b != null && !b.merging && a.url in b.urls) {
+                        // To be merged: the video waits in app storage (it is never saved on its own).
+                        val pd = File(filesDir, "merge/${b.id}").apply { mkdirs() }
+                        val main = files.maxByOrNull { it.length() }!!
+                        val dest = File(pd, Integer.toHexString(a.url.hashCode()) + "." + main.extension)
+                        if (!main.renameTo(dest)) { main.copyTo(dest, true); main.delete() }
+                        a.files.addAll(files.filter { it != main }.map { save(it) })   // e.g. a subtitle file
+                        a.part = dest.absolutePath
+                    } else {
+                        a.batch = ""
+                        a.files.addAll(files.map { save(it) })
+                    }
                     dir.deleteRecursively()
-                    a.files.addAll(saved)
                     a.pct = 100
                     a.done = true
                     a.err = if (optErr.isEmpty()) "" else "Saved, but optimizing failed:\n\n$optErr"
                     onUi { h ->
                         a.bar.progress = 100
-                        if (optErr.isEmpty()) h.setState(a, "Done - saved", C_OK)
-                        else h.setState(a, "Done - saved (not optimized - tap here for details)", C_WARN)
+                        when {
+                            a.part.isNotEmpty() -> h.setState(a, WAIT_MERGE, C_OK)
+                            optErr.isEmpty() -> h.setState(a, "Done - saved", C_OK)
+                            else -> h.setState(a, "Done - saved (not optimized - tap here for details)", C_WARN)
+                        }
                         h.persist()
                         h.updateCounts()
+                        if (a.part.isNotEmpty()) h.checkBatch(a.batch)
                     }
                     return
                 } catch (e: Exception) {
@@ -2702,6 +2853,176 @@ class MainActivity : Activity() {
         }
         contentResolver.openOutputStream(uri)!!.use { out -> f.inputStream().use { it.copyTo(out) } }
         return uri.toString()
+    }
+
+    // ---------- the browser, and merging the videos sent from it ----------
+    private fun openBrowser() {
+        // REORDER_TO_FRONT: an open browser comes back as it was (same page, same videos found)
+        startActivity(Intent(this, BrowserActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
+    }
+
+    /** Links ticked in the browser: cards are added and downloads start; merge = join them when all are done. */
+    private fun addFromBrowser(urls: List<String>, merge: Boolean) {
+        if (urls.isEmpty()) return
+        if (!ready) {
+            pendingBrowser.add(urls to merge)
+            tell("The download engine is still starting. Your ${urls.size} video(s) are added as soon as it is ready.")
+            return
+        }
+        val known = urls.mapNotNull { u -> items.firstOrNull { it.url == u } }
+        val already = known.filter { it.done }.map { it.url }.toSet()   // downloaded before: not downloaded again
+        val members = urls.filter { it !in already }
+        if (merge && members.size >= 2) {
+            val b = Batch("m" + System.currentTimeMillis().toString(36), members)
+            batches[b.id] = b
+            for (a in known) if (!a.done) a.batch = b.id
+        }
+        for (a in known) if (!a.done) { a.check.isChecked = true; startItem(a) }
+        val fresh = urls.filter { u -> items.none { it.url == u } && u !in checking }
+        failed.removeAll(fresh.toSet())                 // asked for again: try again
+        if (fresh.isNotEmpty()) checkLinks(fresh, auto = true)
+        persist()
+        val merged = merge && members.size >= 2
+        tell(buildString {
+            append("Adding ${members.size} video(s) from the browser")
+            append(if (merged) ". They are merged into one video when all are downloaded." else ".")
+            if (already.isNotEmpty()) append(" ${already.size} were downloaded before and are skipped.")
+        })
+    }
+
+    /** Merges a batch once every video in it is downloaded. Call on the main thread after any change to it. */
+    private fun checkBatch(id: String) {
+        val b = batches[id] ?: return
+        if (b.merging || !ready) return
+        // links that left the list (removed, or the check failed) leave the batch
+        b.urls.removeAll { u -> items.none { it.url == u } && u !in checking }
+        // a video that was saved on its own after all (e.g. it finished before it joined) is not merged
+        b.urls.removeAll { u -> items.any { it.url == u && it.done && it.part.isEmpty() } }
+        val members = b.urls.mapNotNull { u -> items.firstOrNull { it.url == u } }
+        if (members.isEmpty()) { batches.remove(id); persist(); return }
+        if (members.size < b.urls.size || members.any { !it.done || it.part.isEmpty() }) return   // still downloading
+        b.merging = true
+        merging.incrementAndGet()
+        refreshService()
+        val n = members.size
+        for (a in members) setState(a, if (n > 1) "Merging $n videos into one..." else "Saving...", C_PRIMARY)
+        if (n > 1) tell("All $n videos are downloaded. Merging them into one...")
+        val name = (members[0].title.take(70) + if (n > 1) " (merged, $n videos)" else "")
+            .replace(Regex("[\\\\/:*?\"<>|\\n\\r\\t]"), "_").trim()
+        val parts = members.map { File(it.part) }
+        merger.execute {
+            var uri: String? = null
+            var err = ""
+            var secs = 0.0
+            if (n > 1) {
+                try {
+                    var last = -1
+                    val r = Merge.run(ffmpegBin(), ::ffmpegEnv, parts, File(filesDir, "merge/$id"), name) { pct ->
+                        if (pct != last) {
+                            last = pct
+                            onUi { h -> for (a in members) h.setState(a, "Merging $n videos into one: $pct%", C_PRIMARY) }
+                        }
+                    }
+                    secs = r.seconds
+                    uri = save(r.file)
+                } catch (e: Exception) {
+                    err = rawError(e)
+                }
+            }
+            // Not merged (one video left, or the merge failed): keep every video by saving each one on its own.
+            if (uri == null) for (a in members) try {
+                a.files.add(save(File(a.part)))
+            } catch (e: Exception) {
+                err += "\n\n" + a.title + ": " + rawError(e)
+            }
+            File(filesDir, "merge/$id").deleteRecursively()
+            onUi { h -> h.mergeDone(b, members, uri, name, secs, err.trim()) }
+        }
+    }
+
+    private fun mergeDone(b: Batch, members: List<Item>, uri: String?, name: String, secs: Double, err: String) {
+        merging.decrementAndGet()
+        batches.remove(b.id)
+        for (a in members) { a.part = ""; a.batch = "" }
+        if (uri != null) {
+            val meta = listOf("Merged", if (secs > 0) fmt(secs.toLong()) else "", "${members.size} videos")
+                .filter { it.isNotEmpty() }.joinToString(" · ")
+            val m = Item("vidgrab-merged:" + b.id, name, listOf("Merged video"), listOf(0), members[0].thumb, meta)
+            m.done = true
+            m.pct = 100
+            m.files.add(uri)
+            // the separate videos were never saved; their downloads went with the merge folder
+            dropFromList(members)
+            addRow(m)
+            setState(m, "Done - ${members.size} videos merged into one and saved", C_OK)
+            Notifier.finished(applicationContext, m)
+            tell("Merged ${members.size} videos into \"$name\". The separate videos were deleted.")
+        } else {
+            for (a in members) {
+                a.err = if (err.isEmpty()) "" else "Could not merge, so each video was saved on its own:\n\n$err"
+                if (members.size > 1) setState(a, "Saved on its own - could not merge (tap here for details)", C_WARN)
+                else setState(a, "Done - saved", C_OK)
+                refreshButtons(a)
+            }
+            if (members.size > 1) tell("Could not merge the videos, so each one was saved on its own. Tap a video's status line for details.")
+        }
+        persist()
+        refreshService()
+        updateCounts()
+    }
+
+    // ---------- proxy ----------
+    /** The proxy for downloads and the browser, e.g. "socks5://10.0.0.2:1080"; null = none. */
+    private fun proxy(): String? = prefs.getString("proxy", "")?.takeIf { it.isNotBlank() }
+
+    private fun proxyText() = proxy() ?: "Off. Any VPN app on the phone also works"
+
+    /** Proxy, and for direct streams the page they were found on and the browser's user agent. */
+    private fun netOptions(r: YoutubeDLRequest, url: String) {
+        proxy()?.let { r.addOption("--proxy", it) }
+        referers[url]?.let { page ->
+            r.addOption("--referer", page)
+            if (browserUa.isNotEmpty()) r.addOption("--user-agent", browserUa)
+        }
+    }
+
+    private fun chooseProxy() {
+        val e = EditText(this).apply {
+            hint = "socks5://host:port"
+            setText(proxy() ?: "")
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+            setSingleLine()
+        }
+        val box = LinearLayout(this)
+        box.orientation = LinearLayout.VERTICAL
+        box.setPadding(px(S5 + S1), px(S2), px(S5 + S1), 0)
+        box.addView(label("VidGrab has no VPN servers of its own, and free VPNs that are safe to trust come as " +
+            "separate apps (for example Proton VPN's free plan). Any VPN app you turn on also covers VidGrab " +
+            "and its browser.\n\nOr enter a proxy here (http, https, socks4 or socks5). It is used for link " +
+            "checks, downloads and the browser.", T_LABEL, pal.muted).apply { setLineSpacing(px(2).toFloat(), 1f) })
+        box.addView(e, lp(MATCH, WRAP).apply { topMargin = px(S3) })
+        val dlg = AlertDialog.Builder(this, dialogTheme()).setTitle("Proxy / VPN").setView(box)
+            .setPositiveButton("Save", null)
+            .setNeutralButton("Turn off") { _, _ -> setProxy("") }
+            .setNegativeButton("Cancel", null)
+            .show()
+        // checked before the dialog closes, so a typo can be fixed
+        dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            val t = e.text.toString().trim()
+            if (t.isEmpty()) { setProxy(""); dlg.dismiss(); return@setOnClickListener }
+            if (!Regex("^(https?|socks4|socks5)://[\\w.-]+:\\d{1,5}$").matches(t)) {
+                e.error = "Write it like socks5://192.168.1.5:1080 or http://proxy.example.com:8080"
+                return@setOnClickListener
+            }
+            setProxy(t)
+            dlg.dismiss()
+        }
+    }
+
+    private fun setProxy(p: String) {
+        prefs.edit().putString("proxy", p).apply()
+        proxyLabel.text = proxyText()
+        tell(if (p.isEmpty()) "Proxy turned off." else "Proxy saved. New link checks, downloads and the browser use it.")
     }
 
     // ---------- test hooks ----------

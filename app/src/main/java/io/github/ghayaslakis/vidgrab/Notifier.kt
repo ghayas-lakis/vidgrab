@@ -85,6 +85,7 @@ object Notifier {
         nm.cancel(runId(a))
         lastPost.remove(a.url)
         if (a.cancelled) { nm.cancel(resultId(a)); return }
+        if (a.done && a.part.isNotEmpty()) return     // waits to be merged: the merged video gets the notification
         channels(ctx)
         val n = when {
             a.done -> {

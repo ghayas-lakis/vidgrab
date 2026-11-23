@@ -6,6 +6,11 @@ VidGrab bundles [yt-dlp](https://github.com/yt-dlp/yt-dlp) and FFmpeg through th
 
 ## Features
 
+- **Private browser with a video finder.** Tap **Browse** to open any site (TikTok, Dailymotion, YouTube, Instagram, ...) inside VidGrab. When a page shows a video, a round **N videos** button appears. Tap it to see every video found, tick the ones you want and tap **Download**. The browser has only back, forward, the address bar (type an address or search with DuckDuckGo), reload and a small menu (*Downloads*, *Desktop site*, *Clear videos found*, *Close and erase browsing*).
+- **Collect a whole series by swiping.** Every video you watch is added to the list in the order you watched it, so swiping quickly through the episodes of a TikTok series collects them all. Ads are left unticked: videos marked "Sponsored" / "Ad" (in several languages), and, once most of the list comes from one account, videos from other accounts. Untick any episode you don't want. Links to videos on the page (for example a series or playlist page) are listed below, unticked.
+- **Merge episodes into one video.** With two or more videos ticked, VidGrab asks whether to merge them. *Merge* downloads them all, joins them into one video in the order of the list, saves it, and deletes the separate videos. When the videos share a format (the usual case for one series) this takes seconds and doesn't re-encode; otherwise they are fitted to the first one's size and re-encoded, which is slower. If merging fails, every video is saved on its own instead, so nothing is lost. A video you remove from the list leaves the merge, and the rest are still merged.
+- **Nothing is kept.** The browser keeps no history, searches, cookies, logins, site storage, cache or form data: all of it is erased when you close the browser (and again when it opens, in case VidGrab was killed while it was open). The address bar asks the keyboard not to learn what you type, and third-party cookies are blocked. Links to "open in the app" are not followed.
+- **Proxy / VPN.** VidGrab has no VPN servers of its own: free VPNs that can be trusted come as separate apps (for example Proton VPN's free plan), and any VPN app you turn on covers VidGrab and its browser too. **Settings → Proxy / VPN** also takes a proxy (`http`, `https`, `socks4` or `socks5`), used for link checks, downloads and the browser.
 - **Add as many links as you like.** Paste them all at once (one per line), tap *Paste* as often as you want, or share links to VidGrab from other apps. New links are checked in the background, 3 at a time, and each becomes a card with its available qualities.
 - **Download all, some or one.** With nothing ticked, the bottom button says **Download all (N)** and downloads every video that isn't downloaded yet. Tick some cards (or *Select all*) to download only those, or use a card's own **Start** button for just that one. A line above the list shows how many are active, done and failed.
 - **Downloads at the same time.** Settings has a **−  2  +** control (1 to 5). The rest wait as *Queued...* and start as soon as one finishes. More at once helps with many small videos. It doesn't make one big video faster, because they share your connection, and some sites slow down or block above about 3.
@@ -87,6 +92,14 @@ To run the tests locally on a connected device or emulator: `gradle connectedDeb
 4. Finished files go to the folder shown in **Settings → Save to** (tap the row to change it). Finished cards switch to **Open** and a round **Share** button.
 
 The app follows the system's light or dark theme.
+
+### Downloading from the browser
+
+1. Tap **Browse** (next to *Paste*) and open a site from the start page, or type an address.
+2. Play a video. The **N videos** button appears at the bottom right. For a series, swipe through the episodes: each one you watch is added.
+3. Tap the button. Watched videos are ticked, except likely ads (shown in amber). Tap a row to tick or untick it.
+4. Tap **Download (N)**. With two or more, choose **Merge** (one video, separate ones deleted afterwards) or **Keep separate**.
+5. The videos are added to VidGrab's list with the default quality (**Settings → Quality for new links**) and start downloading, *Downloads at the same time* at a time. Open the list from the browser's menu (**Downloads**) to see each one's speed and time left. Closing the browser doesn't stop them.
 
 Everything else is in the **More** sheet in the bottom bar:
 
