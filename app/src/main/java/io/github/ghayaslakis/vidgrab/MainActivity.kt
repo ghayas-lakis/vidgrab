@@ -508,6 +508,7 @@ class MainActivity : Activity() {
         private val checking = ConcurrentHashMap.newKeySet<String>()   // links being checked right now
         private val failed = ConcurrentHashMap.newKeySet<String>()     // links that cannot be downloaded (not retried)
         @Volatile private var ready = false
+        internal fun engineReady() = ready && !updating
         @Volatile private var initStarted = false
         @Volatile private var updating = false
         @Volatile private var engineFailed = false                    // the engine could not start

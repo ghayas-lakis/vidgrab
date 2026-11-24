@@ -3,7 +3,9 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
-// CI's emulator tests build with -Pvidgrab.abis=x86_64 (the engine ships that too). Phones are ARM.
+// One APK, for 64-bit ARM: nearly every phone from the last 8 years. Each extra processor type would make
+// it about twice as big. CI's emulator tests build with -Pvidgrab.abis=x86_64; armeabi-v7a (old 32-bit
+// phones) works the same way.
 val abiOverride = (project.findProperty("vidgrab.abis") as String?)?.split(",")?.map { it.trim() }
 
 // A fixed signing key, so a new build installs over the previous one (keeping the list and the updated
@@ -21,17 +23,7 @@ android {
         versionCode = 3
         versionName = "1.2"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        if (abiOverride != null) ndk { abiFilters += abiOverride }
-    }
-    // One APK per phone type: each is about half the size of one APK holding both.
-    // arm64-v8a fits nearly every phone from the last 8 years; armeabi-v7a is for older 32-bit ones.
-    splits {
-        abi {
-            isEnable = abiOverride == null
-            reset()
-            include("arm64-v8a", "armeabi-v7a")
-            isUniversalApk = false
-        }
+        ndk { abiFilters += abiOverride ?: listOf("arm64-v8a") }
     }
     signingConfigs {
         if (fixedKey != null) create("fixed") {

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Builds the APKs (one per phone type). Called by .github/workflows/build.yml.
-# With the VIDGRAB_KEYSTORE secret (base64 of the signing key file) the APKs are signed with VidGrab's
-# fixed key, so they install over the previous build; without it Android's temporary debug key is used.
+# Builds the APK. Called by .github/workflows/build.yml.
+# With the VIDGRAB_KEYSTORE secret (base64 of the signing key file) the APK is signed with VidGrab's
+# fixed key, so it installs over the previous build; without it Android's temporary debug key is used.
 set -uo pipefail
 if [ -n "${VIDGRAB_KEYSTORE_B64:-}" ]; then
   key="${RUNNER_TEMP:-/tmp}/vidgrab-signing.p12"

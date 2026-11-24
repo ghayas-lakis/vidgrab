@@ -8,6 +8,7 @@ VidGrab bundles [yt-dlp](https://github.com/yt-dlp/yt-dlp) and FFmpeg through th
 
 - **Private browser with a video finder.** Tap **Browse** to open any site (TikTok, Dailymotion, YouTube, Instagram, ...) inside VidGrab. When a page shows a video, a round **N videos** button appears. Tap it to see every video found, tick the ones you want and tap **Download**. The browser has only back, forward, the address bar (type an address or search with DuckDuckGo), reload and a small menu (*Downloads*, *Desktop site*, *Clear videos found*, *Close and erase browsing*).
 - **Collect a whole series by swiping.** Every video you watch is added to the list in the order you watched it, so swiping quickly through the episodes of a TikTok series collects them all. Ads are left unticked: videos marked "Sponsored" / "Ad" (in several languages), and, once most of the list comes from one account, videos from other accounts. Untick any episode you don't want. Links to videos on the page (for example a series or playlist page) are listed below, unticked.
+- **Choose by length or size.** The list of videos found shows each one's length (and size, when known) and has two filters: *length* (for example 5 min and longer, Shorts only, or any number of minutes) and *size* (for example 5 MB and bigger). What doesn't pass is hidden and never ticked, the round button counts only what passes, and *Tick all* ticks only that. The filter is remembered. Lengths come from the page itself (YouTube, TikTok, Dailymotion, Twitch, ...), from the stream (HLS, DASH, MP4), or from the site (Dailymotion, Vimeo, YouTube). Videos whose length still isn't known are listed separately, unticked, with a *Check now* line that asks yt-dlp.
 - **Merge episodes into one video.** With two or more videos ticked, VidGrab asks whether to merge them. *Merge* downloads them all, joins them into one video in the order of the list, saves it, and deletes the separate videos. When the videos share a format (the usual case for one series) this takes seconds and doesn't re-encode; otherwise they are fitted to the first one's size and re-encoded, which is slower. If merging fails, every video is saved on its own instead, so nothing is lost. A video you remove from the list leaves the merge, and the rest are still merged.
 - **Nothing is kept.** The browser keeps no history, searches, cookies, logins, site storage, cache or form data: all of it is erased when you close the browser (and again when it opens, in case VidGrab was killed while it was open). The address bar asks the keyboard not to learn what you type, and third-party cookies are blocked. Links to "open in the app" are not followed.
 - **Proxy / VPN.** VidGrab has no VPN servers of its own: free VPNs that can be trusted come as separate apps (for example Proton VPN's free plan), and any VPN app you turn on covers VidGrab and its browser too. **Settings → Proxy / VPN** also takes a proxy (`http`, `https`, `socks4` or `socks5`), used for link checks, downloads and the browser.
@@ -33,17 +34,15 @@ VidGrab bundles [yt-dlp](https://github.com/yt-dlp/yt-dlp) and FFmpeg through th
 | | |
 |---|---|
 | Android | 10 (API 29) or newer |
-| CPU | ARM: `arm64-v8a` or `armeabi-v7a`. For an x86_64 emulator, build with `-Pvidgrab.abis=x86_64`. |
+| CPU | 64-bit ARM (`arm64-v8a`): nearly every phone from the last 8 years. For an old 32-bit phone, build with `-Pvidgrab.abis=armeabi-v7a`; for an x86_64 emulator, with `-Pvidgrab.abis=x86_64`. |
 | Storage | Free space of roughly **2× the video size**. Downloads are assembled in app storage and then copied to your folder, and optimizing needs one more temporary copy. |
 
 ## Installing
 
-Every push to GitHub builds the APKs through GitHub Actions.
+Every push to GitHub builds the APK through GitHub Actions.
 
 1. Open the repository's **Actions** tab and select the latest successful **Build APK** run.
-2. Download the **VidGrab-apk** artifact and unzip it. It holds two APKs:
-   - `app-arm64-v8a-debug.apk`: for nearly every phone from the last 8 years. Use this one.
-   - `app-armeabi-v7a-debug.apk`: only for old 32-bit phones.
+2. Download the **VidGrab-apk** artifact and unzip it. It holds one file, `app-debug.apk`.
 3. Copy the `.apk` to your phone and open it. You may need to allow "Install unknown apps" for your file manager or browser.
 
 ### The signing key (installing over the previous version)
@@ -66,7 +65,7 @@ The repository has no Gradle wrapper, so you need Gradle installed:
 
 ```bash
 gradle assembleDebug
-# APKs: app/build/outputs/apk/debug/app-arm64-v8a-debug.apk and app-armeabi-v7a-debug.apk
+# APK: app/build/outputs/apk/debug/app-debug.apk
 ```
 
 Android Studio can also open the project directly.
@@ -98,8 +97,9 @@ The app follows the system's light or dark theme.
 1. Tap **Browse** (next to *Paste*) and open a site from the start page, or type an address.
 2. Play a video. The **N videos** button appears at the bottom right. For a series, swipe through the episodes: each one you watch is added.
 3. Tap the button. Watched videos are ticked, except likely ads (shown in amber). Tap a row to tick or untick it.
-4. Tap **Download (N)**. With two or more, choose **Merge** (one video, separate ones deleted afterwards) or **Keep separate**.
-5. The videos are added to VidGrab's list with the default quality (**Settings → Quality for new links**) and start downloading, *Downloads at the same time* at a time. Open the list from the browser's menu (**Downloads**) to see each one's speed and time left. Closing the browser doesn't stop them.
+4. To list only long videos (or only Shorts), tap **Any length** at the top of the list and choose, for example *5 min and longer*. **Any size** does the same in MB.
+5. Tap **Download (N)**. With two or more, choose **Merge** (one video, separate ones deleted afterwards) or **Keep separate**.
+6. The videos are added to VidGrab's list with the default quality (**Settings → Quality for new links**) and start downloading, *Downloads at the same time* at a time. Open the list from the browser's menu (**Downloads**) to see each one's speed and time left. Closing the browser doesn't stop them.
 
 Everything else is in the **More** sheet in the bottom bar:
 
@@ -142,6 +142,9 @@ app/src/main/
 │   │                        # download queue, retry logic, saving, FFmpeg optimize
 │   ├── DownloadService.kt   # Foreground service + wake lock + Wi-Fi lock
 │   ├── Notifier.kt          # Per-download notifications and their buttons
+│   ├── Browser.kt          # Private browser and its list of videos found (assets/finder.js)
+│   ├── Lengths.kt          # Video lengths and sizes for the browser's filters
+│   ├── Merge.kt            # Joining videos into one
 │   └── SignIn.kt            # In-app sign-in page and the cookies file for yt-dlp
 └── res/                     # Logo, launcher icons, launcher background color
 app/src/androidTest/         # End-to-end tests (run on an emulator by CI)

@@ -51,8 +51,11 @@ import androidx.webkit.ProxyConfig
 import androidx.webkit.ProxyController
 import androidx.webkit.WebViewFeature
 import org.json.JSONObject
+import com.yausername.youtubedl_android.YoutubeDL
 import java.net.URLEncoder
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executor
+import java.util.concurrent.Executors
 
 /**
  * Recognizes links to single videos on the sites VidGrab knows, and writes them in one form, so the same
@@ -78,7 +81,7 @@ internal object VideoLinks {
             "https://www.instagram.com/reel/${it.groupValues[2]}/" },
         Rule(rx("^https?://(?:www\\.|m\\.|web\\.)?facebook\\.com/(?:watch/?\\?(?:[^#]*&)?v=|reel/|[\\w.]+/videos/(?:[\\w.-]+/)?)(\\d+)")) {
             "https://www.facebook.com/watch/?v=${it.groupValues[1]}" },
-        Rule(rx("^https?://(?:www\\.|mobile\\.)?(?:twitter|x)\\.com/(\\w+)/status/(\\d+)")) {
+        Rule(rx("^https?://(?:www\\.|mobile\\.|m\\.)?(?:twitter|x)\\.com/(\\w+)/status/(\\d+)")) {
             "https://x.com/${it.groupValues[1]}/status/${it.groupValues[2]}" },
         Rule(rx("^https?://(?:www\\.|player\\.)?vimeo\\.com/(?:video/)?(\\d+)")) { "https://vimeo.com/${it.groupValues[1]}" },
         Rule(rx("^https?://(?:www\\.|m\\.)?twitch\\.tv/videos/(\\d+)")) { "https://www.twitch.tv/videos/${it.groupValues[1]}" },
@@ -123,7 +126,14 @@ class BrowserActivity : Activity() {
         var ad = false
         var tick: Boolean? = null       // set by the user; null = the default (see ticked())
         var sent = false                // already sent to the download list
+        val isShort = "youtube.com/shorts/" in url      // at most 3 minutes long
     }
+
+    /** What is known about a video's length and size (0 = not known). sure = stated by the site. */
+    private class Info { var sec = 0; var sure = false; var bytes = 0L }
+
+    /** A row of the list that does something when tapped. */
+    private class RowAction(val text: String, val run: () -> Unit)
 
     private companion object {
         const val F_SEEN = 0            // a video page you watched (a site VidGrab knows)
@@ -132,6 +142,10 @@ class BrowserActivity : Activity() {
         const val F_LINK = 3            // a link to a video on the current page
         const val MAX_STREAMS = 15      // per page
         const val HOME = "about:blank"
+        const val MAX_CHECK = 60        // lengths asked from yt-dlp per tap
+        const val MAX_PAGES = 60        // YouTube pages read for their video's length, per page visited (0.13 MB each)
+        val LENGTHS = listOf(0 to 0, 0 to 60, 60 to 0, 180 to 0, 300 to 0, 600 to 0, 1200 to 0, 2400 to 0, 3600 to 0)
+        val SIZES = listOf(0, 5, 10, 25, 50, 100, 500)
     }
 
     private lateinit var pal: Palette
@@ -157,6 +171,23 @@ class BrowserActivity : Activity() {
     private val links = LinkedHashMap<String, Found>()
     private var lastCount = 0
     private var sheetRefresh: (() -> Unit)? = null
+
+    // Lengths and sizes, and the filter on them (kept between launches; 0 = no limit)
+    private val infos = HashMap<String, Info>()
+    private val streamParts = HashSet<String>()     // the qualities of a stream that is listed itself
+    private val looked = HashSet<String>()          // asked the site
+    private val checked = HashSet<String>()         // asked yt-dlp
+    private val unanswered = HashSet<String>()      // ... and waiting for its answer
+    private val looker = Executors.newFixedThreadPool(3)
+    private val checker = Executors.newFixedThreadPool(2)
+    private val checkIds = ConcurrentHashMap.newKeySet<String>()    // yt-dlp processes running
+    @Volatile private var checkRun = 0
+    private val checking get() = unanswered.size
+    private var pagesRead = 0
+    private var minSec = 0
+    private var maxSec = 0
+    private var minMb = 0
+    private val prefs by lazy { getSharedPreferences("vidgrab", MODE_PRIVATE) }
 
     private fun px(v: Int) = (v * dp).toInt()
     private fun pxf(v: Float) = v * dp
@@ -190,6 +221,9 @@ class BrowserActivity : Activity() {
         setTheme(if (pal.dark) android.R.style.Theme_DeviceDefault_NoActionBar else android.R.style.Theme_DeviceDefault_Light_NoActionBar)
         super.onCreate(s)
         dp = resources.displayMetrics.density
+        minSec = prefs.getInt("browserMinSec", 0)
+        maxSec = prefs.getInt("browserMaxSec", 0)
+        minMb = prefs.getInt("browserMinMb", 0)
         script = try { assets.open("finder.js").bufferedReader().use { it.readText() } } catch (_: Exception) { "" }
         buildUi()
         setupWeb()
@@ -420,6 +454,7 @@ color:${c(pal.muted)};font-size:13px;line-height:1.5}
 
             override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
                 curPage = url
+                pagesRead = 0
                 isLoading = true
                 loading.visibility = View.VISIBLE
                 showAddress(url)
@@ -440,6 +475,8 @@ color:${c(pal.muted)};font-size:13px;line-height:1.5}
                 curPage = url
                 showAddress(url)
                 refreshNav()
+                // a fast swipe is over before the finder looks: the address is enough to list the video
+                VideoLinks.canonical(url)?.let { if (addFound(it, "", F_SEEN, url, false)) refreshFab() }
             }
 
             override fun shouldInterceptRequest(view: WebView, req: WebResourceRequest): WebResourceResponse? {
@@ -505,7 +542,7 @@ color:${c(pal.muted)};font-size:13px;line-height:1.5}
     inner class Bridge {
         @JavascriptInterface
         fun report(json: String) {
-            if (json.length > 200_000) return
+            if (json.length > 400_000) return
             runOnUiThread { onReport(json) }
         }
     }
@@ -528,14 +565,29 @@ color:${c(pal.muted)};font-size:13px;line-height:1.5}
         val pageVideo = VideoLinks.canonical(page)
         if (pageVideo != null) {
             changed = addFound(pageVideo, title, F_SEEN, page, ad) or changed
-            found[pageVideo]?.let { f -> if (title.isNotEmpty() && f.title != title && f.kind == F_SEEN) { f.title = title; changed = true } }
+            found[pageVideo]?.let { f ->
+                if (title.isNotEmpty() && f.title != title && f.kind == F_SEEN) { f.title = title; changed = true }
+                if (o.optBoolean("settled") && f.ad != ad) { f.ad = ad; changed = true }
+            }
+            changed = learn(pageVideo, o.optInt("pageDur"), o.optLong("pageSize"), true) or changed
+            changed = learn(pageVideo, o.optInt("dur"), 0L, false) or changed
         }
         // 2. the big video on screen has its own link (feeds whose address doesn't change)
         val near = o.optString("near").takeIf { it.isNotEmpty() }?.let { VideoLinks.canonical(it) }
-        if (near != null && near != pageVideo) changed = addFound(near, "", F_SEEN, page, ad) or changed
+        if (near != null) {
+            if (near != pageVideo) changed = addFound(near, "", F_SEEN, page, ad) or changed
+            changed = learn(near, o.optInt("nearDur"), o.optLong("nearSize"), true) or changed
+            if (pageVideo == null) changed = learn(near, o.optInt("dur"), 0L, false) or changed
+        }
         // 3. another site showing a video: the page (yt-dlp knows many sites) and its video sources
         if (!VideoLinks.knownSite(Uri.parse(page).host) && o.optBoolean("video")) {
-            if (pageVideo == null) changed = addFound(page.substringBefore('#'), title, F_PAGE, page, false) or changed
+            if (pageVideo == null) {
+                val u = page.substringBefore('#')
+                changed = addFound(u, title, F_PAGE, page, false) or changed
+                changed = learn(u, o.optInt("metaDur"), 0L, true) or changed
+                // an ad before the video can play in the same place: the longest one is the video
+                if (o.optInt("dur") > (infos[u]?.sec ?: 0)) changed = learn(u, o.optInt("dur"), 0L, false) or changed
+            }
             val media = o.optJSONArray("media")
             for (k in 0 until (media?.length() ?: 0)) changed = addStream(media!!.optString(k), page) or changed
         }
@@ -545,8 +597,11 @@ color:${c(pal.muted)};font-size:13px;line-height:1.5}
         for (k in 0 until (ls?.length() ?: 0)) {
             val e = ls!!.optJSONArray(k) ?: continue
             val c = VideoLinks.canonical(e.optString(0)) ?: continue
-            if (c in found || c in now) continue
-            now[c] = links[c] ?: Found(c, e.optString(1).trim(), VideoLinks.author(c), F_LINK, page)
+            changed = learn(c, e.optInt(2), e.optLong(3), true) or changed
+            val t = e.optString(1).trim()
+            val f = found[c] ?: now[c] ?: links[c] ?: Found(c, t, VideoLinks.author(c), F_LINK, page)
+            if (t.isNotEmpty() && f.title.isBlank()) { f.title = t; changed = true }
+            if (c !in found) now[c] = f
         }
         if (now.keys != links.keys) {
             links.clear()
@@ -566,7 +621,7 @@ color:${c(pal.muted)};font-size:13px;line-height:1.5}
     }
 
     private fun addStream(url: String, page: String): Boolean {
-        if (!url.startsWith("http") || url in found) return false
+        if (!url.startsWith("http") || url in found || url in streamParts) return false
         if (found.values.count { it.kind == F_STREAM && it.page == page } >= MAX_STREAMS) return false
         val name = (Uri.parse(url).lastPathSegment ?: "video").take(48)
         found[url] = Found(url, "Video stream: $name", "", F_STREAM, page)
@@ -576,6 +631,10 @@ color:${c(pal.muted)};font-size:13px;line-height:1.5}
     private fun clearFound() {
         found.clear()
         links.clear()
+        infos.clear()
+        looked.clear()
+        checked.clear()
+        stopChecking()
         lastCount = 0
         refreshFab()
         toast("The list of videos found is empty. New videos you watch are added again.")
@@ -583,11 +642,18 @@ color:${c(pal.muted)};font-size:13px;line-height:1.5}
 
     /** The round button: how many videos were found. It pops when a new one is added. */
     private fun refreshFab() {
+        lookUp()
         sheetRefresh?.invoke()
-        val n = found.size
-        val l = links.size
-        if (fullView != null || (n == 0 && l == 0)) { fab.visibility = View.GONE; lastCount = n; return }
-        fab.text = if (n > 0) "$n video${if (n == 1) "" else "s"}" else "$l video link${if (l == 1) "" else "s"}"
+        val n = found.values.count { it.url !in streamParts && fits(it) == true }
+        val l = links.values.count { fits(it) == true }
+        if (fullView != null || (found.isEmpty() && links.isEmpty())) { fab.visibility = View.GONE; lastCount = n; return }
+        val unknown = if (n + l > 0) 0 else (found.values + links.values).count { it.url !in streamParts && fits(it) == null }
+        fab.text = when {
+            n > 0 -> "$n video${if (n == 1) "" else "s"}"
+            l > 0 -> "$l ${if (filterOn()) "" else "video "}link${if (l == 1) "" else "s"}"
+            unknown > 0 -> "$unknown to check"
+            else -> "No videos"
+        } + if (filterOn()) "  ·  " + filterText() else ""
         if (fab.visibility != View.VISIBLE) {
             fab.visibility = View.VISIBLE
             fab.alpha = 0f
@@ -599,6 +665,197 @@ color:${c(pal.muted)};font-size:13px;line-height:1.5}
             }.start()
         }
         lastCount = n
+    }
+
+    // ---------- length and size ----------
+    private fun filterOn() = minSec > 0 || maxSec > 0 || minMb > 0
+
+    private fun mins(s: Int) = if (s % 60 == 0) "${s / 60} min" else Lengths.clock(s)
+
+    private fun lengthText() = when {
+        minSec > 0 -> mins(minSec) + " +"
+        maxSec > 0 -> "Shorts"
+        else -> "Any length"
+    }
+
+    private fun sizeText() = if (minMb > 0) "$minMb MB +" else "Any size"
+
+    private fun filterText() = listOf(if (minSec > 0 || maxSec > 0) lengthText() else "", if (minMb > 0) sizeText() else "")
+        .filter { it.isNotEmpty() }.joinToString(", ")
+
+    /** Does the video pass the filter? null = its length (or size) is not known. */
+    private fun fits(f: Found): Boolean? {
+        if (!filterOn() || f.sent) return true
+        val i = infos[f.url]
+        var known = false
+        if (minSec > 0 || maxSec > 0) {
+            val s = i?.sec ?: 0
+            if (s > 0) {
+                if (s < minSec || (maxSec in 1 until s && !f.isShort)) return false
+                known = true
+            } else if (f.isShort) {
+                if (minSec >= 180) return false
+                if (maxSec > 0) known = true        // asked for Shorts
+            }
+        }
+        if (minMb > 0 && i != null && i.bytes > 0) {
+            if (i.bytes < minMb * 1_000_000L) return false
+            known = true
+        }
+        return if (known) true else null
+    }
+
+    /** Remembers a video's length and size. Returns whether that is news. */
+    private fun learn(url: String, sec: Int, bytes: Long, sure: Boolean): Boolean {
+        if (sec <= 0 && bytes <= 0) return false
+        val i = infos.getOrPut(url) { Info() }
+        var changed = false
+        if (sec > 0 && (sure || !i.sure)) {
+            if (i.sec != sec) { i.sec = sec; changed = true }
+            if (sure) i.sure = true
+        }
+        if (bytes > 0 && bytes != i.bytes) { i.bytes = bytes; changed = true }
+        return changed
+    }
+
+    private fun lengths() = Lengths(web.settings.userAgentString ?: mobileUa, prefs.getString("proxy", "") ?: "")
+
+    /**
+     * Asks the sites for lengths the page didn't show, where that is quick: streams, Dailymotion, Vimeo and
+     * YouTube. Only when needed: a filter is set, or the list is open.
+     */
+    private fun lookUp() {
+        if (isFinishing || (!filterOn() && sheetRefresh == null)) return
+        val todo = (found.values + links.values).filter {
+            !it.sent && it.url !in looked && (infos[it.url]?.sec ?: 0) == 0 && it.url !in streamParts
+        }
+        if (todo.isEmpty()) return
+        val lens = lengths()
+        fun later(work: () -> (() -> Boolean)) = try {
+            looker.execute {
+                val apply = work()
+                runOnUiThread { if (!isFinishing && !isDestroyed && apply()) refreshFab() }
+            }
+        } catch (_: Exception) {}
+        val dm = todo.filter { "dailymotion.com/video/" in it.url }.map { it.url }
+        for (group in dm.chunked(50)) {
+            looked.addAll(group)
+            later {
+                val r = lens.dailymotion(group.map { it.substringAfterLast('/') });
+                { group.map { learn(it, r[it.substringAfterLast('/')] ?: 0, 0L, true) }.any { it } }
+            }
+        }
+        for (f in todo) {
+            val u = f.url
+            when {
+                f.kind == F_STREAM -> {
+                    looked.add(u)
+                    val cookie = try { CookieManager.getInstance().getCookie(u) } catch (_: Exception) { null }
+                    later {
+                        val r = lens.stream(u, f.page, cookie);
+                        {
+                            // the stream's separate qualities are the same video: listed once
+                            val parts = (r?.parts ?: emptyList()).filter { it != u }
+                            val more = streamParts.addAll(parts)
+                            learn(u, r?.sec ?: 0, r?.bytes ?: 0L, true) or more
+                        }
+                    }
+                }
+                u.startsWith("https://vimeo.com/") -> {
+                    looked.add(u)
+                    later { val s = lens.vimeo(u); { learn(u, s, 0L, true) } }
+                }
+                // a whole page per video, so only when the filter needs it
+                u.startsWith("https://www.youtube.com/") && (minSec > 0 || maxSec > 0) && fits(f) == null &&
+                    pagesRead < MAX_PAGES -> {
+                    pagesRead++
+                    looked.add(u)
+                    later { val s = lens.youtube(u); { learn(u, s, 0L, true) } }
+                }
+            }
+        }
+    }
+
+    /** Asks yt-dlp for the lengths that couldn't be found any other way (slow, so only when asked to). */
+    private fun check(list: List<Found>) {
+        if (!MainActivity.engineReady()) { toast("The download engine is still starting. Try again in a moment."); return }
+        val lens = lengths()
+        val run = checkRun
+        for (f in list.take(MAX_CHECK)) {
+            if (!checked.add(f.url)) continue
+            unanswered.add(f.url)
+            checker.execute {
+                var r: VideoInfo? = null
+                if (run == checkRun) {
+                    val jar = Cookies.forRun(this)
+                    val id = "len" + System.nanoTime()
+                    checkIds.add(id)
+                    r = lens.engine(f.url, jar, id)
+                    checkIds.remove(id)
+                    jar?.delete()
+                }
+                runOnUiThread {
+                    if (isFinishing || isDestroyed || run != checkRun) return@runOnUiThread
+                    unanswered.remove(f.url)
+                    learn(f.url, r?.sec ?: 0, r?.bytes ?: 0L, true)
+                    refreshFab()
+                }
+            }
+        }
+        sheetRefresh?.invoke()
+    }
+
+    private fun stopChecking() {
+        checkRun++
+        for (id in checkIds.toList()) try { YoutubeDL.getInstance().destroyProcessById(id) } catch (_: Exception) {}
+        checked.removeAll(unanswered)               // these can be asked again
+        unanswered.clear()
+    }
+
+    private fun setFilter(min: Int = minSec, max: Int = maxSec, mb: Int = minMb) {
+        minSec = min; maxSec = max; minMb = mb
+        stopChecking()
+        prefs.edit().putInt("browserMinSec", min).putInt("browserMaxSec", max).putInt("browserMinMb", mb).apply()
+        refreshFab()
+    }
+
+    private fun dialogTheme() = if (pal.dark) android.R.style.Theme_DeviceDefault_Dialog_Alert
+        else android.R.style.Theme_DeviceDefault_Light_Dialog_Alert
+
+    private fun askNumber(title: String, done: (Int) -> Unit) {
+        val e = EditText(this).apply { inputType = InputType.TYPE_CLASS_NUMBER; setSingleLine(); hint = "0" }
+        val box = FrameLayout(this).apply { setPadding(px(S5 + S1), px(S2), px(S5 + S1), 0); addView(e) }
+        AlertDialog.Builder(this, dialogTheme()).setTitle(title).setView(box)
+            .setPositiveButton("OK") { _, _ -> e.text.toString().toIntOrNull()?.let { done(minOf(it, 100_000)) } }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun chooseLength() {
+        val names = LENGTHS.map { (lo, hi) ->
+            when { lo == 3600 -> "1 hour and longer"; lo > 0 -> "${lo / 60} min and longer"
+                hi > 0 -> "Shorts only (or up to ${hi / 60} min)"; else -> "Any length" }
+        } + "Other..."
+        AlertDialog.Builder(this, dialogTheme()).setTitle("Show videos of this length")
+            .setSingleChoiceItems(names.toTypedArray(), LENGTHS.indexOf(minSec to maxSec).let { if (it < 0) LENGTHS.size else it }) { d, i ->
+                d.dismiss()
+                if (i < LENGTHS.size) setFilter(min = LENGTHS[i].first, max = LENGTHS[i].second)
+                else askNumber("At least how many minutes?") { setFilter(min = it * 60, max = 0) }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun chooseSize() {
+        val names = SIZES.map { if (it == 0) "Any size" else "$it MB and bigger" } + "Other..."
+        AlertDialog.Builder(this, dialogTheme()).setTitle("Show videos of this size")
+            .setSingleChoiceItems(names.toTypedArray(), SIZES.indexOf(minMb).let { if (it < 0) SIZES.size else it }) { d, i ->
+                d.dismiss()
+                if (i < SIZES.size) setFilter(mb = SIZES[i])
+                else askNumber("At least how many MB?") { setFilter(mb = it) }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     // ---------- the list of videos found ----------
@@ -617,6 +874,7 @@ color:${c(pal.muted)};font-size:13px;line-height:1.5}
     /** Ticked by default: watched videos except ads, page videos, streams of pages without one. Not links. */
     private fun ticked(f: Found, main: String?): Boolean {
         if (f.sent) return false
+        if (f.tick == null && fits(f) != true) return false
         return f.tick ?: when (f.kind) {
             F_SEEN -> !f.ad && !otherAccount(f, main)
             F_PAGE -> true
@@ -655,7 +913,35 @@ color:${c(pal.muted)};font-size:13px;line-height:1.5}
             setPadding(px(S4), 0, px(S4), px(S2))
         })
 
-        // rows: section titles (String) and videos (Found)
+        // the filter: how long, how big
+        fun pill(onClick: () -> Unit) = Button(this).apply {
+            isAllCaps = false
+            textSize = T_LABEL
+            typeface = MEDIUM
+            stateListAnimator = null
+            minHeight = 0
+            minimumHeight = 0
+            minWidth = 0
+            minimumWidth = 0
+            setPadding(px(14), 0, px(14), 0)
+            setOnClickListener { onClick() }
+        }
+        fun paintPill(b: Button, text: String, on: Boolean) {
+            b.text = "$text  \u25BE"
+            b.setTextColor(if (on) pal.onAccentSoft else pal.muted)
+            b.background = RippleDrawable(ColorStateList.valueOf(pal.ripple),
+                if (on) rounded(pal.accentSoft, R_PILL) else rounded(pal.surface, R_PILL, pal.outlineStrong), null)
+        }
+        val lenPill = pill { chooseLength() }
+        val sizePill = pill { chooseSize() }
+        sheet.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(px(S4), px(S1), px(S4), px(S2))
+            addView(lenPill, LinearLayout.LayoutParams(WRAP, px(38)))
+            addView(sizePill, LinearLayout.LayoutParams(WRAP, px(38)).apply { marginStart = px(S2) })
+        })
+
+        // rows: section titles (String), videos (Found) and actions (RowAction)
         val rows = mutableListOf<Any>()
         var main: String? = null
         val listView = ListView(this).apply {
@@ -672,9 +958,9 @@ color:${c(pal.muted)};font-size:13px;line-height:1.5}
             override fun getCount() = rows.size
             override fun getItem(p: Int) = rows[p]
             override fun getItemId(p: Int) = p.toLong()
-            override fun getViewTypeCount() = 2
-            override fun getItemViewType(p: Int) = if (rows[p] is String) 0 else 1
-            override fun isEnabled(p: Int) = rows[p] is Found && !(rows[p] as Found).sent
+            override fun getViewTypeCount() = 3
+            override fun getItemViewType(p: Int) = when (rows[p]) { is String -> 0; is Found -> 1; else -> 2 }
+            override fun isEnabled(p: Int) = rows[p].let { it is RowAction || (it is Found && !it.sent) }
 
             override fun getView(p: Int, convert: View?, parent: ViewGroup): View {
                 val r = rows[p]
@@ -687,6 +973,16 @@ color:${c(pal.muted)};font-size:13px;line-height:1.5}
                         setPadding(px(S4), px(S3), px(S4), px(S1))
                     }
                     t.text = r.uppercase()
+                    return t
+                }
+                if (r is RowAction) {
+                    val t = (convert as? TextView) ?: TextView(this@BrowserActivity).apply {
+                        textSize = T_LABEL
+                        typeface = MEDIUM
+                        setTextColor(pal.accent)
+                        setPadding(px(S4), px(S2), px(S4), px(S2))
+                    }
+                    t.text = r.text
                     return t
                 }
                 val f = r as Found
@@ -726,9 +1022,14 @@ color:${c(pal.muted)};font-size:13px;line-height:1.5}
                 val number = if (f.kind == F_SEEN) {
                     (found.values.filter { it.kind == F_SEEN }.indexOf(f) + 1).toString() + ".  "
                 } else ""
-                val fallback = if (f.author.isNotEmpty()) "@${f.author} · video ${f.url.takeLast(6)}" else f.url
+                val fallback = if (f.author.isNotEmpty()) "@${f.author} · video ${f.url.takeLast(6)}"
+                    else if (f.isShort) "YouTube Short ${f.url.takeLast(11)}" else f.url
                 title.text = number + f.title.ifBlank { fallback }
-                val flags = mutableListOf(VideoLinks.site(f.url))
+                val inf = infos[f.url]
+                val flags = mutableListOf(
+                    if (inf != null && inf.sec > 0) Lengths.clock(inf.sec) else if (f.isShort) "Short" else "",
+                    if (inf != null && inf.bytes > 0) "%.1f MB".format(inf.bytes / 1e6) else "",
+                    VideoLinks.site(f.url))
                 if (f.author.isNotEmpty() && f.title.isNotBlank()) flags.add("@" + f.author)
                 when {
                     f.sent -> flags.add("added to downloads")
@@ -743,27 +1044,59 @@ color:${c(pal.muted)};font-size:13px;line-height:1.5}
             }
         }
 
+        // every video, in the order of the list without a filter (the order videos are merged in)
+        fun inOrder(): List<Found> {
+            val all = found.values.filter { it.url !in streamParts }
+            return all.filter { it.kind != F_STREAM } + all.filter { it.kind == F_STREAM } + links.values
+        }
+
+        // what "Tick all" is for: the videos that pass the filter
+        fun tickable(): List<Found> {
+            val open = rows.filterIsInstance<Found>().filter { !it.sent }
+            return open.filter { fits(it) == true }.ifEmpty { open }
+        }
+
         fun rebuild() {
             main = mainAuthor()
             rows.clear()
-            val seen = found.values.filter { it.kind == F_SEEN || it.kind == F_PAGE }
-            val streams = found.values.filter { it.kind == F_STREAM }
+            paintPill(lenPill, lengthText(), minSec > 0 || maxSec > 0)
+            paintPill(sizePill, sizeText(), minMb > 0)
+            val all = inOrder()
+            val (pass, rest) = all.partition { fits(it) == true }
+            val seen = pass.filter { it.kind == F_SEEN || it.kind == F_PAGE }
+            val streams = pass.filter { it.kind == F_STREAM }
+            val ls = pass.filter { it.kind == F_LINK }
+            val unknown = rest.filter { fits(it) == null }
             if (seen.isNotEmpty()) { rows.add("Watched (${seen.size})"); rows.addAll(seen) }
             if (streams.isNotEmpty()) { rows.add("Video streams (${streams.size})"); rows.addAll(streams) }
-            if (links.isNotEmpty()) { rows.add("Links on this page (${links.size})"); rows.addAll(links.values) }
+            if (ls.isNotEmpty()) { rows.add("Links on this page (${ls.size})"); rows.addAll(ls) }
+            if (unknown.isNotEmpty() || checking > 0) {
+                rows.add((if (minSec > 0 || maxSec > 0) "Length" else "Size") + " not known (${unknown.size})")
+                val todo = unknown.filter { it.url !in checked && it.kind != F_STREAM }
+                if (checking > 0) rows.add(RowAction("Checking, $checking left. Tap to stop") { stopChecking(); sheetRefresh?.invoke() })
+                else if (todo.isNotEmpty()) rows.add(RowAction("Check " + (if (todo.size > MAX_CHECK) "the first $MAX_CHECK" else
+                    "${todo.size}") + " now (a few seconds each)") { check(todo) })
+                rows.addAll(unknown)
+            }
+            val hidden = rest.size - unknown.size
+            if (hidden > 0) rows.add("$hidden hidden by the filter")
             adapter.notifyDataSetChanged()
-            val n = rows.count { it is Found }
-            head.text = if (n == 0) "No videos found yet" else "Videos found ($n)"
+            head.text = when {
+                all.isEmpty() -> "No videos found yet"
+                filterOn() -> "Videos found (${pass.size} of ${all.size})"
+                else -> "Videos found (${all.size})"
+            }
             val k = count()
             dl.text = if (k > 0) "Download ($k)" else "Download"
             dl.isEnabled = k > 0
             dl.alpha = if (k > 0) 1f else 0.5f
-            val open = rows.filterIsInstance<Found>().filter { !it.sent }
+            val open = tickable()
             tickAll.text = if (open.isNotEmpty() && open.all { ticked(it, main) }) "Untick all" else "Tick all"
         }
 
         listView.adapter = adapter
         listView.setOnItemClickListener { _, _, p, _ ->
+            (rows[p] as? RowAction)?.let { it.run(); return@setOnItemClickListener }
             val f = rows[p] as? Found ?: return@setOnItemClickListener
             if (f.sent) return@setOnItemClickListener
             f.tick = !ticked(f, main)
@@ -793,7 +1126,7 @@ color:${c(pal.muted)};font-size:13px;line-height:1.5}
         styleBtn(dl, true)
         clear.text = "Clear"
         tickAll.setOnClickListener {
-            val open = rows.filterIsInstance<Found>().filter { !it.sent }
+            val open = tickable()
             val on = !(open.isNotEmpty() && open.all { ticked(it, main) })
             for (f in open) f.tick = on
             rebuild()
@@ -807,7 +1140,8 @@ color:${c(pal.muted)};font-size:13px;line-height:1.5}
                 .show()
         }
         dl.setOnClickListener {
-            val sel = rows.filterIsInstance<Found>().filter { ticked(it, main) }
+            val listed = rows.filterIsInstance<Found>().toSet()
+            val sel = inOrder().filter { it in listed && ticked(it, main) }
             if (sel.isEmpty()) return@setOnClickListener
             askMerge(sel) { d.dismiss() }
         }
@@ -823,6 +1157,7 @@ color:${c(pal.muted)};font-size:13px;line-height:1.5}
 
         rebuild()
         sheetRefresh = { rebuild() }
+        lookUp()
         d.setOnDismissListener { sheetRefresh = null }
         d.setContentView(sheet)
         d.setCanceledOnTouchOutside(true)
@@ -919,6 +1254,9 @@ color:${c(pal.muted)};font-size:13px;line-height:1.5}
 
     override fun onDestroy() {
         sheetRefresh = null
+        looker.shutdownNow()
+        checker.shutdownNow()
+        stopChecking()
         erase()
         (web.parent as? ViewGroup)?.removeView(web)
         web.destroy()
