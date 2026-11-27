@@ -15,7 +15,20 @@ VidGrab bundles [yt-dlp](https://github.com/yt-dlp/yt-dlp) and FFmpeg through th
 - **Add as many links as you like.** Paste them all at once (one per line), tap *Paste* as often as you want, or share links to VidGrab from other apps. New links are checked in the background, 3 at a time, and each becomes a card with its available qualities.
 - **Download all, some or one.** With nothing ticked, the bottom button says **Download all (N)** and downloads every video that isn't downloaded yet. Tick some cards (or *Select all*) to download only those, or use a card's own **Start** button for just that one. A line above the list shows how many are active, done and failed.
 - **Downloads at the same time.** Settings has a **−  2  +** control (1 to 5). The rest wait as *Queued...* and start as soon as one finishes. More at once helps with many small videos. It doesn't make one big video faster, because they share your connection, and some sites slow down or block above about 3.
-- **Quality per video, with a default.** Each card has its own quality picker: a specific height (with an approximate size), *Best available*, or *Audio only (MP3)*. **Settings → Quality for new links** sets the one new cards start on: that height or the nearest one below it. *Also set N ticked* applies it to the ticked cards in one go.
+- **Search.** Type words instead of a link (for example a song's name) and tap **Search** under the box. Pick YouTube or SoundCloud, then tick the results you want (each shows its length and channel) and tap *Add ticked*.
+- **Quality per video, with a default.** Each card has its own quality picker: a specific height (with an approximate size), *Best available*, or *Audio only* (MP3, or the format chosen in *More options*). **Settings → Quality for new links** sets the one new cards start on: that height or the nearest one below it. *Also set N ticked* applies it to the ticked cards in one go.
+- **Download only a part, or one file per chapter.** A card's **⋯** button (or a long press on the card) has *Download only a part...* (from and to, like `1:30` and `2:45`; *exactly* re-encodes the ends, otherwise the part starts at the nearest keyframe) and *Split into chapters* (one file per chapter, for videos that have chapters). The card shows what was chosen. The same menu has *View download log* (what yt-dlp printed, with a *Copy* button), *Copy link* and *Open the video's page*.
+- **More options** (**Settings → More options**):
+  - *Video:* MP4 or MKV, *Prefer H.264* (plays on every device; on YouTube it can mean 1080p at most), a thumbnail inside video files.
+  - *Audio only:* MP3, M4A, Opus, FLAC or WAV; quality (standard, best, 320, 192 or 128 kbps); cover art in MP3 and M4A files (on by default).
+  - *Subtitles:* download them in chosen languages (default: the phone's language and English), with or without automatic captions, inside the video or as `.srt` files next to it.
+  - *Files:* title, artist, date and chapters written into the file (on by default); file names (*Title*, *Uploader - Title*, *Date - Title*, *Title [video id]* or a custom yt-dlp template).
+  - *YouTube:* [SponsorBlock](https://sponsor.ajay.app/), the community database of sponsor segments: off, mark them as chapters, or cut out sponsors, self-promotion and subscribe reminders.
+  - *Downloading:* start downloads right away (no need to tap Download), a speed limit, *Use IPv4 only*.
+  - *Engine:* update once a day (on by default), the update channel (nightly, stable or master), and extra yt-dlp options added to every download (for power users).
+  - *App:* theme (system, light or dark), *Incognito* (downloads are not added to the history), *Back up* and *Restore* (settings, list and history in one JSON file; logins are left out).
+- **Download history.** *More → Download history* lists everything you downloaded (searchable), to open, share, copy the link, download again, remove it from the history, or delete the file. A link you downloaded before says so on its card. Nothing is added while *Incognito* is on.
+- **Import links from a file.** *More → Import links from a file* takes every link in a text file (one per line, or anywhere in the text) and checks them like pasted links.
 - **Pause, resume and stop.** *Pause* keeps the partial file and *Start* continues from it. *Stop* discards the partial file.
 - **Survives bad connections.** When the connection drops or switches (for example mobile data to Wi-Fi), downloads stop at once and resume from the partial file on the new connection. If a resumed download stays far slower than it was before the interruption, it reconnects (at most twice). Progress, speed and ETA stay visible through interruptions. Readable messages are shown, such as "This video is private" or "Phone storage is full".
 - **Wi-Fi only by default.** Downloads wait for Wi-Fi (a VPN running over Wi-Fi counts). Untick *Download on Wi-Fi only* to use mobile data as well. Checking links still works on mobile data, because it uses very little.
@@ -25,7 +38,8 @@ VidGrab bundles [yt-dlp](https://github.com/yt-dlp/yt-dlp) and FFmpeg through th
 - **Sign in to sites.** *More → Sign in to a site* opens the site's login page inside VidGrab. After you sign in and tap *Done*, links and downloads use that login: for private or members-only videos, or when a site says "Sign in to confirm you're not a bot". The login stays on the phone; *More → Sign out of all sites* forgets it.
 - **Optimize.** FFmpeg remuxes the file without re-encoding. This fixes timestamps, drops corrupt packets and moves the MP4 index to the front ("faststart") so the video starts playing faster and seeks better. It can run automatically after each download, later on downloaded items, or on any video already on the phone (saved as a new "(optimized)" copy).
 - **Choose where files go.** The default is `Download/VidGrab`. You can pick any folder through the system folder picker.
-- **Engine updates.** The app checks for a new yt-dlp once a day at startup (about 3 MB), because sites change often and an outdated engine stops working with them. *More → Update engine* updates it on demand.
+- **Engine updates.** The app checks for a new yt-dlp once a day at startup (about 3 MB), because sites change often and an outdated engine stops working with them. *More → Update engine* updates it on demand. *More options* can turn the daily check off and choose the channel (nightly by default, or stable or master).
+- **Clear temporary files.** *More → Clear temporary files* deletes cached thumbnails, temporary files and leftover downloads nothing uses, and says how much space it freed. Partial downloads of videos in the list are kept.
 - **Error details.** Tap a red error message, or the status bubble after a failed link check, to see the full error text and the engine version, with a *Copy* button.
 - **List is remembered.** The list of items, their chosen resolution and their saved files are kept between launches.
 
@@ -74,9 +88,9 @@ Android Studio can also open the project directly.
 
 Every push, and a run every Monday (sites change even when the code doesn't), runs two GitHub Actions jobs:
 
-- **build** compiles the APK. On failure, Kotlin errors show up as annotations on the run's page.
+- **build** compiles the APK and runs the unit tests (`app/src/test`: the yt-dlp arguments each of *More options* produces, time and name parsing). On failure, Kotlin errors show up as annotations on the run's page.
 - **e2e** starts an Android 13 emulator, installs the app and uses it for real, with the bundled yt-dlp, Python and FFmpeg and a real network (`app/src/androidTest`, run by `ci/e2e.sh`):
-  - `EndToEndTest` (must pass): pastes a link to [testdata/vidgrab-test.mp4](testdata/vidgrab-test.mp4), downloads it, checks the saved file was optimized (its MP4 index moved to the front), runs *Optimize ticked files*, then *Delete ticked videos* and checks the file is gone. It also downloads *Audio only (MP3)* and checks the result is an MP3, checks *Remove ticked unfinished*, adds a playlist link ([testdata/playlist.rss](testdata/playlist.rss)) and checks its two videos become cards, pastes two links at once and uses *Download all* with *Downloads at the same time* set to 1 (checking that both finish and never more than one runs), checks that *Quality for new links* sets new cards, and closes the screen during a download to check that a new screen picks up the same download and its result.
+  - `EndToEndTest` (must pass): pastes a link to [testdata/vidgrab-test.mp4](testdata/vidgrab-test.mp4), downloads it, checks the saved file was optimized (its MP4 index moved to the front), runs *Optimize ticked files*, then *Delete ticked videos* and checks the file is gone. It also downloads *Audio only (MP3)* and checks the result is an MP3, checks *Remove ticked unfinished*, adds a playlist link ([testdata/playlist.rss](testdata/playlist.rss)) and checks its two videos become cards, pastes two links at once and uses *Download all* with *Downloads at the same time* set to 1 (checking that both finish and never more than one runs), checks that *Quality for new links* sets new cards, closes the screen during a download to check that a new screen picks up the same download and its result, and downloads only seconds 1 to 3 of the test video (checking the saved length), checks that it is in the download history, and that the same link added again says it was downloaded before.
   - `YouTubeTest` (warning only): downloads a short YouTube video. YouTube often blocks CI's data-center IPs, so a failure there is reported as a warning rather than failing the run.
 
 Test results, the HTML report and logcat are in the run's **e2e-results** artifact. The tests drive the app through a small set of hooks in `MainActivity` (see "UI TEST CONTRACT" there); keep them working when changing the UI.
@@ -105,6 +119,8 @@ Everything else is in the **More** sheet in the bottom bar:
 
 | Action | What it does |
 |---|---|
+| Download history | Everything you downloaded: open, share, download again, remove, or delete the file. |
+| Import links from a file | Adds every link in a text file to the box. |
 | Remove completed | Clears finished items from the list. Files are kept. |
 | Remove ticked unfinished | Removes the *ticked* items that haven't finished, stopping them if they are running, and discards their partial files. |
 | Delete ticked videos | Deletes the *ticked* videos, finished or not. Saved files are deleted from the phone, unfinished downloads are stopped and discarded, and the cards are removed. |
@@ -113,11 +129,12 @@ Everything else is in the **More** sheet in the bottom bar:
 | Update engine | Updates yt-dlp to the newest (nightly) build. Not available while downloads are running. |
 | Sign in to a site | Opens a site's login page (YouTube, Instagram, Facebook, X, TikTok, Vimeo or any other) so links and downloads can use your login. |
 | Sign out of all sites | Forgets every login VidGrab saved. |
+| Clear temporary files | Frees space taken by thumbnails, temporary files and leftover downloads. |
 | Remove all | Clears the whole list and discards partial downloads. Saved files are kept. |
 
 Each action shows how many videos it applies to, and is greyed out when that number is 0. Results appear as a short pop-up message, so you see them even when the list is scrolled down.
 
-If a site stops working, try **More → Update engine** first. Sites change often, and yt-dlp is updated to keep up.
+If a site stops working, try **More → Update engine** first. Sites change often, and yt-dlp is updated to keep up. For "HTTP Error 403" or videos that need an account, try **More → Sign in to a site**.
 
 > **Installing a new build:** with the signing key set up (see *Installing*), a new build installs over the old one and keeps your list. Version 1.2 changed the app's package name, so it installs as a new app next to older builds: uninstall the old *VidGrab* once.
 
@@ -145,8 +162,12 @@ app/src/main/
 │   ├── Browser.kt          # Private browser and its list of videos found (assets/finder.js)
 │   ├── Lengths.kt          # Video lengths and sizes for the browser's filters
 │   ├── Merge.kt            # Joining videos into one
+│   ├── Options.kt          # More options: the settings and the yt-dlp arguments they become
+│   ├── Screens.kt          # The More options and Download history pages
+│   ├── History.kt          # The download history, and backups (settings, list, history)
 │   └── SignIn.kt            # In-app sign-in page and the cookies file for yt-dlp
 └── res/                     # Logo, launcher icons, launcher background color
+app/src/test/                # Unit tests of Options.kt (run on the computer by CI's build job)
 app/src/androidTest/         # End-to-end tests (run on an emulator by CI)
 ci/                          # build.sh, e2e.sh, annotate.py (used by the workflow)
 testdata/                    # Test video and test playlist for the end-to-end tests
@@ -161,7 +182,7 @@ Main dependencies:
 ## How it works
 
 1. **Checking a link** runs `yt-dlp --dump-single-json --no-playlist --flat-playlist`. The app reads the `formats` list and builds the resolution menu from the video heights, keeping the largest reported size for each height. For a playlist, `--flat-playlist` lists its videos without checking each one; the ones you pick are then checked one by one.
-2. **Downloading** runs yt-dlp with `--continue`, retries, a 20 s socket timeout, 10 MB HTTP chunks and 4 parallel fragments for HLS/DASH streams. Progress is printed in a fixed format of the app's own (`--progress-template`) and parsed by the app. The output goes to a private folder (`files/dl/<hash of url+resolution>`), so a retry or resume always finds its partial file. Video and audio are merged into MP4. Audio-only uses `-x --audio-format mp3`.
+2. **Downloading** runs yt-dlp with the options of *More options* (`Options.kt`: format, audio format, subtitles, metadata, SponsorBlock, speed limit, extra options), `--download-sections` for a part and `--split-chapters` for chapters, and `--continue`, retries, a 20 s socket timeout, 10 MB HTTP chunks and 4 parallel fragments for HLS/DASH streams. Progress is printed in a fixed format of the app's own (`--progress-template`) and parsed by the app. The output goes to a private folder (`files/dl/<hash of url+resolution>`), so a retry or resume always finds its partial file. Video and audio are merged into MP4. Audio-only uses `-x --audio-format mp3`.
 3. **Saving** copies the finished file into MediaStore Downloads or the chosen folder, then deletes the private copy.
 4. **Signing in** saves the in-app browser's cookies for the sites the login visited, as a Netscape `cookies.txt` in the app's private storage. Each yt-dlp run gets its own copy through `--cookies`.
 5. **Optimizing** runs the bundled `ffmpeg -c copy` with `+genpts+discardcorrupt` and `-movflags +faststart` (MP4/MOV/M4V) and replaces the file only if the result looks sane.
@@ -171,6 +192,7 @@ Main dependencies:
 See [IMPROVEMENT_PLAN.md](IMPROVEMENT_PLAN.md) for the full list of known bugs and the roadmap. The main ones:
 
 - If Android kills the whole app (rare while a download runs, because of the foreground service), running downloads stop. The list and partial files are kept, and *Start* continues them.
+- VidGrab does not try to get around YouTube's bot checks. Some apps do (generating "PO tokens" with Google's BotGuard, pretending to be other YouTube apps, or faking a browser's network fingerprint); VidGrab leaves that out on purpose. When YouTube answers "403" or "Sign in to confirm you're not a bot", update the engine, sign in, or try later or on another network.
 - Google may refuse to sign in inside an app's browser ("This browser or app may not be secure"), so signing in to YouTube can fail even when other sites work.
 - Builds are debug builds, signed with VidGrab's own key (not for the Play Store).
 - The UI is English only.

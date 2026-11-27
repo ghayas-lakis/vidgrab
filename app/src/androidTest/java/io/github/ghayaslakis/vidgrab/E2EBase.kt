@@ -32,6 +32,7 @@ abstract class E2EBase {
             .remove("items").remove("tree").remove("parallel").remove("quality")
             .putBoolean("wifiOnly", false).putBoolean("optimize", true)
             .commit()
+        History.clear(ctx)
         sc = ActivityScenario.launch(MainActivity::class.java)
         act { it.autoConfirm = true }
         // The first start unpacks Python + ffmpeg and updates the engine: this can take a while.
@@ -133,6 +134,17 @@ abstract class E2EBase {
         ctx.contentResolver.query(Uri.parse(uri), arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
             if (c.moveToFirst()) c.getString(0) else null
         }
+
+    /** A saved video's length in milliseconds. */
+    protected fun durationMs(uri: String): Long {
+        val r = android.media.MediaMetadataRetriever()
+        try {
+            r.setDataSource(ctx, Uri.parse(uri))
+            return r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: -1
+        } finally {
+            r.release()
+        }
+    }
 
     /** True while MediaStore still has the file. */
     protected fun exists(uri: String): Boolean = try {

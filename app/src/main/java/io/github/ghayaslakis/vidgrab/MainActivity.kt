@@ -178,6 +178,11 @@ internal const val G_BACK = 24
 internal const val G_FORWARD = 25
 internal const val G_GLOBE = 26
 internal const val G_MERGE = 27
+internal const val G_SEARCH = 28
+internal const val G_TUNE = 29
+internal const val G_CUT = 30
+internal const val G_HISTORY = 31
+internal const val G_FILE = 32
 
 /**
  * Simple line icons drawn on a 24x24 grid, scaled to the bounds. They need no resources, stay sharp
@@ -367,6 +372,41 @@ internal class Glyph(private val kind: Int, private val base: Int, private val s
                 path.moveTo(8.5f, 16.5f); path.lineTo(12f, 20f); path.lineTo(15.5f, 16.5f)
                 cv.drawPath(path, p)
             }
+            G_SEARCH -> {
+                cv.drawCircle(10.5f, 10.5f, 6f, p)
+                cv.drawLine(15f, 15f, 20f, 20f, p)
+            }
+            G_TUNE -> {
+                cv.drawLine(4f, 7f, 20f, 7f, p)
+                cv.drawLine(4f, 12f, 20f, 12f, p)
+                cv.drawLine(4f, 17f, 20f, 17f, p)
+                p.style = Paint.Style.FILL
+                cv.drawCircle(15f, 7f, 2.4f, p)
+                cv.drawCircle(8f, 12f, 2.4f, p)
+                cv.drawCircle(13f, 17f, 2.4f, p)
+            }
+            G_CUT -> {
+                cv.drawCircle(6.5f, 17f, 2.8f, p)
+                cv.drawCircle(17.5f, 17f, 2.8f, p)
+                cv.drawLine(8.5f, 15f, 18f, 4f, p)
+                cv.drawLine(15.5f, 15f, 6f, 4f, p)
+            }
+            G_HISTORY -> {
+                r.set(4f, 4f, 20f, 20f); cv.drawArc(r, 200f, 300f, false, p)
+                path.moveTo(3f, 8.5f); path.lineTo(5f, 11.5f); path.lineTo(8f, 9.5f)
+                cv.drawPath(path, p)
+                cv.drawLine(12f, 8f, 12f, 12.5f, p)
+                cv.drawLine(12f, 12.5f, 15f, 14.5f, p)
+            }
+            G_FILE -> {
+                path.moveTo(14f, 3f); path.lineTo(7f, 3f); path.quadTo(5.5f, 3f, 5.5f, 4.5f)
+                path.lineTo(5.5f, 19.5f); path.quadTo(5.5f, 21f, 7f, 21f); path.lineTo(17f, 21f)
+                path.quadTo(18.5f, 21f, 18.5f, 19.5f); path.lineTo(18.5f, 7.5f); path.close()
+                path.moveTo(14f, 3f); path.lineTo(14f, 7.5f); path.lineTo(18.5f, 7.5f)
+                cv.drawPath(path, p)
+                cv.drawLine(9f, 12.5f, 15f, 12.5f, p)
+                cv.drawLine(9f, 16.5f, 15f, 16.5f, p)
+            }
         }
         cv.restore()
     }
@@ -444,6 +484,10 @@ class MainActivity : Activity() {
         @Volatile var note = ""           // the last status line set by the download work (for its notification)
         @Volatile var batch = ""          // id of the Batch this video is merged with ("" = saved on its own)
         @Volatile var part = ""           // downloaded file waiting in app storage to be merged
+        @Volatile var cut = ""            // only part of the video: "from:to" in seconds (to -1 = the end); "" = all
+        @Volatile var exact = false       // cut exactly where asked (re-encodes the ends), not at the nearest keyframe
+        @Volatile var split = false       // save one file per chapter
+        val log = java.util.ArrayDeque<String>()   // the last lines yt-dlp printed (⋯ > View download log)
         var done = false
         val files = mutableListOf<String>()
     }
@@ -458,10 +502,11 @@ class MainActivity : Activity() {
         @Volatile var merging = false
     }
 
-    private lateinit var input: EditText
+    internal lateinit var input: EditText
     private lateinit var clearBtn: Button
+    private lateinit var searchBtn: Button
     private lateinit var folderLabel: TextView
-    private lateinit var qualityLabel: TextView
+    internal lateinit var qualityLabel: TextView
     private lateinit var proxyLabel: TextView
     private lateinit var summary: TextView
     private lateinit var list: LinearLayout
@@ -473,7 +518,7 @@ class MainActivity : Activity() {
     private lateinit var empty: View
     private lateinit var topBar: LinearLayout
     private lateinit var scroll: ScrollView
-    private lateinit var prefs: SharedPreferences
+    internal lateinit var prefs: SharedPreferences
     private var syncing = false                                   // updating "Select all" from code
     private var dp = 1f
     private val handler = Handler(Looper.getMainLooper())
@@ -489,7 +534,7 @@ class MainActivity : Activity() {
     companion object {
         // Downloads running in this process (their partial-file folders).
         private val running = ConcurrentHashMap.newKeySet<String>()
-        private val items = CopyOnWriteArrayList<Item>()
+        internal val items = CopyOnWriteArrayList<Item>()
         private val imgPool = Executors.newFixedThreadPool(2)         // thumbnails
         private val analyzer = Executors.newSingleThreadExecutor()   // optimizing, cleanup
         private val checker = Executors.newFixedThreadPool(3)        // link checks: 3 at a time
@@ -514,7 +559,7 @@ class MainActivity : Activity() {
         @Volatile private var engineFailed = false                    // the engine could not start
         @Volatile private var checkErr = ""                           // details of the last failed link check
         @Volatile private var svcOn = false
-        @Volatile private var pal = LIGHT
+        @Volatile internal var pal = LIGHT
         @Volatile private var curNet: Network? = null
         private var netOn = false
         /** The screen on display (or the last one shown): background work reports its results there. */
@@ -608,32 +653,39 @@ class MainActivity : Activity() {
     private val C_OK: Int get() = pal.ok
     private val C_WARN: Int get() = pal.warn
     private val C_DANGER: Int get() = pal.danger
-    private val MATCH = LinearLayout.LayoutParams.MATCH_PARENT
-    private val WRAP = LinearLayout.LayoutParams.WRAP_CONTENT
+    internal val MATCH = LinearLayout.LayoutParams.MATCH_PARENT
+    internal val WRAP = LinearLayout.LayoutParams.WRAP_CONTENT
 
-    private fun px(v: Int) = (v * dp).toInt()
+    internal fun px(v: Int) = (v * dp).toInt()
     private fun pxf(v: Float) = v * dp
 
     private fun isNight(c: Configuration = resources.configuration) =
         (c.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
 
+    /** Settings > More options > Theme: light, dark, or the system's. */
+    internal fun wantDark(c: Configuration = resources.configuration) = when (prefs.getString("theme", "system")) {
+        "dark" -> true
+        "light" -> false
+        else -> isNight(c)
+    }
+
     private fun themeRes() = if (pal.dark) android.R.style.Theme_DeviceDefault_NoActionBar
         else android.R.style.Theme_DeviceDefault_Light_NoActionBar
 
-    private fun dialogTheme() = if (pal.dark) android.R.style.Theme_DeviceDefault_Dialog_Alert
+    internal fun dialogTheme() = if (pal.dark) android.R.style.Theme_DeviceDefault_Dialog_Alert
         else android.R.style.Theme_DeviceDefault_Light_Dialog_Alert
 
     /** The color with its alpha multiplied by f. */
     private fun fade(c: Int, f: Float) =
         Color.argb((Color.alpha(c) * f).toInt(), Color.red(c), Color.green(c), Color.blue(c))
 
-    private fun rounded(color: Int, r: Int, stroke: Int = 0, strokeDp: Float = 1f) = GradientDrawable().apply {
+    internal fun rounded(color: Int, r: Int, stroke: Int = 0, strokeDp: Float = 1f) = GradientDrawable().apply {
         setColor(color)
         cornerRadius = px(r).toFloat()
         if (stroke != 0) setStroke(maxOf(1, pxf(strokeDp).toInt()), stroke)
     }
 
-    private fun oval(color: Int) = GradientDrawable().apply {
+    internal fun oval(color: Int) = GradientDrawable().apply {
         shape = GradientDrawable.OVAL
         setColor(color)
     }
@@ -641,20 +693,20 @@ class MainActivity : Activity() {
     private fun dot(color: Int, size: Int): Drawable = oval(color).apply { setBounds(0, 0, px(size), px(size)) }
 
     /** Press feedback. Without a mask the ripple follows the content's (rounded) shape. */
-    private fun ripple(content: Drawable?, mask: Drawable? = null, onFill: Boolean = false) =
+    internal fun ripple(content: Drawable?, mask: Drawable? = null, onFill: Boolean = false) =
         RippleDrawable(ColorStateList.valueOf(if (onFill) Color.argb(56, 255, 255, 255) else pal.ripple), content, mask)
 
-    private fun lp(w: Int, h: Int, weight: Float = 0f) = LinearLayout.LayoutParams(w, h, weight)
+    internal fun lp(w: Int, h: Int, weight: Float = 0f) = LinearLayout.LayoutParams(w, h, weight)
 
-    private fun add(parent: LinearLayout, v: View, top: Int = 0, bottom: Int = 0) = parent.addView(v,
+    internal fun add(parent: LinearLayout, v: View, top: Int = 0, bottom: Int = 0) = parent.addView(v,
         lp(MATCH, WRAP).apply { setMargins(0, px(top), 0, px(bottom)) })
 
-    private fun hrow() = LinearLayout(this).apply {
+    internal fun hrow() = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
     }
 
-    private fun label(t: String, size: Float, color: Int, face: Typeface = Typeface.DEFAULT) = TextView(this).apply {
+    internal fun label(t: String, size: Float, color: Int, face: Typeface = Typeface.DEFAULT) = TextView(this).apply {
         text = t
         textSize = size
         setTextColor(color)
@@ -662,19 +714,19 @@ class MainActivity : Activity() {
     }
 
     /** Small uppercase heading above a block. */
-    private fun overline(t: String) = label(t.uppercase(), T_OVERLINE, pal.subtle, MEDIUM).apply {
+    internal fun overline(t: String) = label(t.uppercase(), T_OVERLINE, pal.subtle, MEDIUM).apply {
         letterSpacing = 0.12f
         setPadding(px(S1), px(S5 + S1), px(S1), px(S2))
     }
 
     /** A rounded square (or circle) holding an icon. */
-    private fun tile(icon: Int, fg: Int, bgc: Int, size: Int = 36, r: Int = R_SM) = ImageView(this).apply {
+    internal fun tile(icon: Int, fg: Int, bgc: Int, size: Int = 36, r: Int = R_SM) = ImageView(this).apply {
         background = rounded(bgc, r)
         scaleType = ImageView.ScaleType.CENTER
         setImageDrawable(Glyph(icon, fg, px(size / 2 + 2)))
     }
 
-    private fun card() = LinearLayout(this).apply {
+    internal fun card() = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
         background = rounded(pal.surface, R_LG, pal.outline)
         elevation = if (pal.dark) 0f else pxf(1.5f)
@@ -724,7 +776,7 @@ class MainActivity : Activity() {
         return s
     }
 
-    private fun btn(text: String, kind: Int = TONAL, icon: Int = 0, h: Int = 44, onClick: () -> Unit): Button {
+    internal fun btn(text: String, kind: Int = TONAL, icon: Int = 0, h: Int = 44, onClick: () -> Unit): Button {
         val b = Button(this)
         b.text = text
         b.isAllCaps = false
@@ -789,7 +841,7 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun switchOf(on: Boolean, changed: (Boolean) -> Unit) = Switch(this).apply {
+    internal fun switchOf(on: Boolean, changed: (Boolean) -> Unit) = Switch(this).apply {
         thumbTintList = ColorStateList(arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
             intArrayOf(Color.WHITE, if (pal.dark) hex("#9AA3B2") else Color.WHITE))
         trackTintList = ColorStateList(arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
@@ -799,7 +851,7 @@ class MainActivity : Activity() {
     }
 
     /** A settings row: icon tile, title, muted explanation, and an optional control on the right. */
-    private fun settingRow(icon: Int, title: String, sub: TextView, end: View?): LinearLayout {
+    internal fun settingRow(icon: Int, title: String, sub: TextView, end: View?): LinearLayout {
         val r = hrow()
         r.setPadding(px(S3), px(S3), px(S3), px(S3))
         r.addView(tile(icon, pal.accent, pal.accentSoft), lp(px(36), px(36)))
@@ -814,7 +866,7 @@ class MainActivity : Activity() {
         return r
     }
 
-    private fun subText(t: String) = label(t, T_CAPTION, pal.muted).apply { setPadding(0, px(2), 0, 0) }
+    internal fun subText(t: String) = label(t, T_CAPTION, pal.muted).apply { setPadding(0, px(2), 0, 0) }
 
     /** A compact "−  2  +" control for a small number. */
     private fun stepper(value: Int, min: Int, max: Int, changed: (Int) -> Unit): LinearLayout {
@@ -846,7 +898,7 @@ class MainActivity : Activity() {
         return box
     }
 
-    private fun addDivider(parent: LinearLayout, inset: Int) = parent.addView(
+    internal fun addDivider(parent: LinearLayout, inset: Int) = parent.addView(
         View(this).apply { setBackgroundColor(pal.outline) },
         lp(MATCH, 1).apply { marginStart = px(inset); marginEnd = px(S3) })
 
@@ -1014,7 +1066,7 @@ class MainActivity : Activity() {
         linksHead.addView(btn("Paste", FILLED, G_PASTE, 38) { pasteClipboard() }, lp(WRAP, px(38)))
         add(links, linksHead)
         input = EditText(this).apply {
-            hint = "Paste links here, one per line"
+            hint = "Paste links (one per line), or type words to search"
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
             minLines = 3
             gravity = Gravity.TOP or Gravity.START
@@ -1031,7 +1083,15 @@ class MainActivity : Activity() {
         input.setTextCursorDrawable(rounded(pal.accent, 1).apply { setSize(px(2), px(20)) })
         add(links, input, S3)
         val foot = hrow()
-        foot.addView(label("Tip: share a link to VidGrab from any app", T_CAPTION, pal.subtle), lp(0, WRAP, 1f))
+        foot.addView(label("Tip: share a link to VidGrab from any app", T_CAPTION, pal.subtle).apply {
+            maxLines = 2
+        }, lp(0, WRAP, 1f))
+        // Words instead of links: search a site for them (the results are listed to pick from).
+        searchBtn = btn("Search", TONAL, G_SEARCH, 32) { search(input.text.toString().trim()) }
+        searchBtn.textSize = T_LABEL
+        searchBtn.setPadding(px(10), 0, px(12), 0)
+        searchBtn.visibility = View.GONE
+        foot.addView(searchBtn, lp(WRAP, px(32)).apply { marginEnd = px(S1) })
         clearBtn = btn("Clear", GHOST, G_CLOSE, 32) { input.setText("") }
         clearBtn.textSize = T_LABEL
         clearBtn.setPadding(px(10), 0, px(12), 0)
@@ -1043,6 +1103,8 @@ class MainActivity : Activity() {
             override fun onTextChanged(s: CharSequence?, st: Int, b: Int, c: Int) {}
             override fun afterTextChanged(e: Editable?) {
                 clearBtn.visibility = if (e.isNullOrEmpty()) View.INVISIBLE else View.VISIBLE
+                val t = e?.toString()?.trim().orEmpty()
+                searchBtn.visibility = if (t.length >= 2 && !Regex("https?://").containsMatchIn(t)) View.VISIBLE else View.GONE
                 handler.removeCallbacks(checkRun)
                 handler.postDelayed(checkRun, 600)
             }
@@ -1108,6 +1170,12 @@ class MainActivity : Activity() {
         val pRow = settingRow(G_GLOBE, "Proxy / VPN", proxyLabel, pChange)
         pRow.setOnClickListener { chooseProxy() }
         add(settings, pRow)
+        addDivider(settings, 60)
+        val oEnd = ImageView(this).apply { setImageDrawable(Glyph(G_CHEVRON_RIGHT, pal.muted, px(18))) }
+        val oRow = settingRow(G_TUNE, "More options",
+            subText("Formats, subtitles, SponsorBlock, file names, speed limit, theme..."), oEnd)
+        oRow.setOnClickListener { showOptions() }
+        add(settings, oRow)
         add(root, settings)
 
         // video list: heading with count + "Select all", empty state, then one card per video
@@ -1204,7 +1272,7 @@ class MainActivity : Activity() {
 
     override fun onConfigurationChanged(c: Configuration) {
         super.onConfigurationChanged(c)
-        if (isNight(c) != pal.dark) applyTheme()
+        if (wantDark(c) != pal.dark) applyTheme()
     }
 
     /**
@@ -1212,11 +1280,11 @@ class MainActivity : Activity() {
      * on screen (typed links, status, ticks, chosen quality, status lines, progress). Items keep running;
      * their background work looks up a.state / a.bar when it updates them, so it finds the new views.
      */
-    private fun applyTheme() {
+    internal fun applyTheme() {
         val typed = input.text.toString()
         val said = status.text.toString()
         val y = scroll.scrollY
-        pal = if (isNight()) DARK else LIGHT
+        pal = if (wantDark()) DARK else LIGHT
         setTheme(themeRes())
         buildUi()
         input.setText(typed)
@@ -1231,7 +1299,7 @@ class MainActivity : Activity() {
      * the previous one showed (tick, quality, status line, progress); running downloads update the new
      * views from then on, because they look up a.state / a.bar each time.
      */
-    private fun reattach() {
+    internal fun reattach() {
         val ticks = items.map { it.check.isChecked }
         val sels = items.map { it.spinner.selectedItemPosition }
         val states = items.map { it.state.text.toString() }
@@ -1253,11 +1321,11 @@ class MainActivity : Activity() {
     }
 
     override fun onCreate(s: Bundle?) {
-        pal = if (isNight()) DARK else LIGHT
+        prefs = getSharedPreferences("vidgrab", MODE_PRIVATE)
+        pal = if (wantDark()) DARK else LIGHT
         setTheme(themeRes())
         super.onCreate(s)
         dp = resources.displayMetrics.density
-        prefs = getSharedPreferences("vidgrab", MODE_PRIVATE)
         setParallel(parallel())
         buildUi()
         host = this
@@ -1322,12 +1390,13 @@ class MainActivity : Activity() {
      * after a reinstall), so check for a new yt-dlp once a day at startup. It is a small download (~3 MB).
      */
     private fun autoUpdate() {
+        if (!prefs.getBoolean("autoUpdate", true)) return
         val last = prefs.getLong("engineChecked", 0L)
         if (System.currentTimeMillis() - last < 24 * 60 * 60 * 1000L || !online()) return
         updating = true
         onUi { h -> h.status.text = "Updating the download engine..." }
         try {
-            YoutubeDL.getInstance().updateYoutubeDL(application, YoutubeDL.UpdateChannel.NIGHTLY)
+            YoutubeDL.getInstance().updateYoutubeDL(application, Opts.channel(prefs))
             prefs.edit().putLong("engineChecked", System.currentTimeMillis()).apply()
         } catch (_: Exception) {
             // keep the current engine; it is tried again on the next start
@@ -1432,7 +1501,8 @@ class MainActivity : Activity() {
             has("not available in your country", "geo restrict", "geo-restrict") -> "Not available in your country" to false
             has("unsupported url") -> "This link is not supported" to false
             has("video unavailable", "has been removed", "does not exist", "http error 404") -> "Video not found or removed" to false
-            has("http error 403") -> "The site refused access (403)" to false
+            has("http error 403") ->
+                "The site refused access (403). Try More > Update engine, or sign in (More > Sign in to a site)" to false
             has("http error 429", "too many requests") -> "Too many requests - try again later" to false
             has("no space left") -> "Phone storage is full" to false
             has("securityexception", "permission denied", "cannot create file") -> "Cannot write to the chosen folder - pick it again" to false
@@ -1470,6 +1540,10 @@ class MainActivity : Activity() {
 
     override fun onActivityResult(req: Int, res: Int, data: Intent?) {
         super.onActivityResult(req, res, data)
+        val picked = data?.data
+        if (req == 5 && res == RESULT_OK && picked != null) { importLinks(picked); return }
+        if (req == 6 && res == RESULT_OK && picked != null) { writeBackup(picked); return }
+        if (req == 7 && res == RESULT_OK && picked != null) { readBackup(picked); return }
         if (req == 3 && res == RESULT_OK && data != null) {
             val uris = mutableListOf<Uri>()
             data.clipData?.let { c -> for (k in 0 until c.itemCount) uris.add(c.getItemAt(k).uri) }
@@ -1568,7 +1642,7 @@ class MainActivity : Activity() {
                         choices.add(h)
                     }
                     labels.add("Best available"); choices.add(0)
-                    labels.add("Audio only (MP3)"); choices.add(-1)
+                    labels.add(Opts.audioLabel(prefs)); choices.add(-1)
                     val dur = j.optDouble("duration", 0.0).toLong()
                     val meta = listOf(j.optString("extractor_key", ""), if (dur > 0) fmt(dur) else "",
                         j.optString("uploader", ""))
@@ -1580,7 +1654,10 @@ class MainActivity : Activity() {
                             h.addRow(item)
                             h.preselect(item)
                             item.check.isChecked = true
-                            if (auto) h.startItem(item)
+                            val before = History.find(h, u)
+                            if (auto || h.prefs.getBoolean("autoStart", false)) h.startItem(item)
+                            else if (before != null) h.setState(item, "Downloaded before (" + h.day(before.date) +
+                                "). Tap Start to download it again", C_WARN)
                             h.persist()
                         }
                         checking.remove(u)
@@ -1616,7 +1693,7 @@ class MainActivity : Activity() {
         }
     }
 
-    /** (link, title) of each video in a playlist checked with --flat-playlist. */
+    /** (link, shown title) of each video in a playlist or search checked with --flat-playlist. */
     private fun playlistEntries(j: JSONObject): List<Pair<String, String>> {
         val out = mutableListOf<Pair<String, String>>()
         val es = j.optJSONArray("entries") ?: return out
@@ -1625,18 +1702,62 @@ class MainActivity : Activity() {
             val link = listOf(e.optString("webpage_url", ""), e.optString("url", ""))
                 .firstOrNull { it.startsWith("http") } ?: continue
             val t = e.optString("title", "").let { if (it.isEmpty() || it == "null") link else it }
-            if (out.none { it.first == link }) out.add(link to t)
+            // the length and the channel, when the list has them, help to pick the right one
+            val dur = e.optDouble("duration", 0.0).toLong()
+            val who = listOf(e.optString("channel", ""), e.optString("uploader", ""))
+                .firstOrNull { it.isNotEmpty() && it != "null" } ?: ""
+            val extra = listOf(if (dur > 0) fmt(dur) else "", who).filter { it.isNotEmpty() }.joinToString(" · ")
+            if (out.none { it.first == link }) out.add(link to (if (extra.isEmpty()) t else "$t  ($extra)"))
         }
         return out
+    }
+
+    /** "27 Nov 2026" */
+    internal fun day(ms: Long): String =
+        java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM).format(java.util.Date(ms))
+
+    /** Words typed instead of a link: asks which site to search. */
+    private fun search(q: String) {
+        if (q.length < 2) return
+        if (!ready) { tell("The download engine is still starting - try again in a moment"); return }
+        AlertDialog.Builder(this, dialogTheme()).setTitle("Search for \"" + q.take(40) + "\" on")
+            .setItems(Opts.SEARCH.map { it.second }.toTypedArray()) { _, k -> runSearch(q, Opts.SEARCH[k]) }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    /** Lists a site's results for the words (yt-dlp's search), to tick the ones to add. */
+    private fun runSearch(q: String, engine: Pair<String, String>) {
+        status.text = "Searching " + engine.second + " for \"" + q + "\"..."
+        checker.execute {
+            try {
+                val req = YoutubeDLRequest(engine.first + q)
+                req.addOption("--dump-single-json")
+                req.addOption("--flat-playlist")
+                req.addOption("--socket-timeout", "20")
+                netOptions(req, "")
+                val entries = playlistEntries(JSONObject(YoutubeDL.getInstance().execute(req).out))
+                onUi { h ->
+                    if (entries.isEmpty()) h.tell("Nothing found on " + engine.second + " for \"" + q + "\"")
+                    else {
+                        h.status.text = "Found ${entries.size} result(s). Tick the ones you want."
+                        h.pickFromPlaylist(q, engine.second + ": " + q, entries, false)
+                    }
+                }
+            } catch (e: Exception) {
+                checkErr = rawError(e)
+                onUi { h -> h.status.text = "Search failed: " + h.why(e).first + ". Tap here for details." }
+            }
+        }
     }
 
     /**
      * A playlist (or channel) link: lets the user tick which of its videos to add. The ticked links go into
      * the box in place of the playlist link, and are then checked like any pasted link.
      */
-    private fun pickFromPlaylist(link: String, title: String, entries: List<Pair<String, String>>) {
+    private fun pickFromPlaylist(link: String, title: String, entries: List<Pair<String, String>>, tick: Boolean = true) {
         val shown = entries.take(300)
-        val picked = BooleanArray(shown.size) { true }
+        val picked = BooleanArray(shown.size) { tick }
         fun addPicked() {
             removeFromInput(link)
             val chosen = shown.filterIndexed { k, _ -> picked[k] }.map { it.first }
@@ -1647,11 +1768,11 @@ class MainActivity : Activity() {
         }
         if (autoConfirm) { addPicked(); return }
         AlertDialog.Builder(this, dialogTheme())
-            .setTitle(title + " (" + entries.size + " videos" + (if (entries.size > shown.size) ", first ${shown.size} shown" else "") + ")")
+            .setTitle(title + " (" + entries.size + (if (tick) " videos" else " results") + (if (entries.size > shown.size) ", first ${shown.size} shown" else "") + ")")
             .setMultiChoiceItems(shown.map { it.second }.toTypedArray(), picked) { _, k, on -> picked[k] = on }
             .setPositiveButton("Add ticked") { _, _ -> addPicked() }
-            .setNeutralButton("Untick all", null)
-            .setNegativeButton("Cancel") { _, _ -> removeFromInput(link) }
+            .setNeutralButton(if (tick) "Untick all" else "Tick all", null)
+            .setNegativeButton("Cancel") { _, _ -> if (tick) removeFromInput(link) }   // a search keeps its words
             .show()
             .also { d ->
                 // "Untick all" / "Tick all" without closing the dialog
@@ -1777,6 +1898,21 @@ class MainActivity : Activity() {
             setTextColor(pal.muted)
             setPadding(0, px(3), 0, 0)
         })
+        // what the video's own options change (its ⋯ button): only a part, one file per chapter
+        val own = listOf(if (a.cut.isNotEmpty()) "Part " + cutText(a) + (if (a.exact) " (exact)" else "") else "",
+            if (a.split) "One file per chapter" else "").filter { it.isNotEmpty() }.joinToString(" · ")
+        if (own.isNotEmpty() && !a.done) titles.addView(TextView(this).apply {
+            text = own
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            textSize = T_CAPTION
+            typeface = MEDIUM
+            setTextColor(pal.accent)
+            setPadding(0, px(3), 0, 0)
+            setCompoundDrawablesRelative(Glyph(if (a.cut.isNotEmpty()) G_CUT else G_TUNE, pal.accent).apply {
+                setBounds(0, 0, px(13), px(13)) }, null, null, null)
+            compoundDrawablePadding = px(4)
+        })
         val top = LinearLayout(this)
         top.orientation = LinearLayout.HORIZONTAL
         top.addView(thumb, lp(px(112), px(63)))
@@ -1784,7 +1920,9 @@ class MainActivity : Activity() {
 
         // quality pill on the left, actions on the right
         a.spinner = Spinner(this, Spinner.MODE_DROPDOWN)
-        a.spinner.adapter = qualityAdapter(a.labels)
+        // "Audio only" names the format chosen in More options, also on cards made before it changed
+        a.spinner.adapter = qualityAdapter(a.labels.mapIndexed { k, l ->
+            if (a.choices.getOrNull(k) == -1) Opts.audioLabel(prefs) else l })
         styleChip(a.spinner)
         val chipBox = FrameLayout(this)
         chipBox.addView(a.spinner, FrameLayout.LayoutParams(WRAP, px(36), Gravity.START or Gravity.CENTER_VERTICAL))
@@ -1802,9 +1940,16 @@ class MainActivity : Activity() {
         a.stopBtn.scaleType = ImageView.ScaleType.CENTER
         a.stopBtn.setPadding(0, 0, 0, 0)
         a.stopBtn.setOnClickListener { if (a.done) shareItem(a) else stopItem(a) }
+        // the video's own options: only a part, chapters, its log, its link
+        val moreBtn = ImageButton(this)
+        moreBtn.scaleType = ImageView.ScaleType.CENTER
+        moreBtn.setPadding(0, 0, 0, 0)
+        styleRound(moreBtn, G_MORE, "Options for this video", GHOST)
+        moreBtn.setOnClickListener { itemMenu(a) }
         val actions = hrow()
         actions.addView(chipBox, lp(0, WRAP, 1f))
-        actions.addView(a.stopBtn, lp(px(38), px(38)).apply { marginStart = px(S2) })
+        actions.addView(moreBtn, lp(px(38), px(38)).apply { marginStart = px(S1) })
+        actions.addView(a.stopBtn, lp(px(38), px(38)).apply { marginStart = px(S1) })
         actions.addView(a.toggle, lp(WRAP, px(38)).apply { marginStart = px(S2) })
 
         a.bar = SmoothBar(this).apply {
@@ -1828,6 +1973,7 @@ class MainActivity : Activity() {
         box.elevation = if (pal.dark) 0f else pxf(1.5f)
         box.foreground = ripple(null, rounded(Color.WHITE, R_LG))
         box.setOnClickListener { a.check.toggle() }
+        box.setOnLongClickListener { itemMenu(a); true }
         box.addView(top, lp(MATCH, WRAP))
         box.addView(actions, lp(MATCH, WRAP).apply { topMargin = px(S3) })
         box.addView(a.bar, lp(MATCH, px(5)).apply { topMargin = px(S3 + 2) })
@@ -1835,6 +1981,134 @@ class MainActivity : Activity() {
         a.box = box
         paintCard(a)
         loadThumb(a)
+    }
+
+    /** Rebuilds one card in place (after its options changed), keeping what it showed. */
+    private fun rebuildCard(a: Item) {
+        val idx = list.indexOfChild(a.box)
+        if (idx < 0) return
+        val tick = a.check.isChecked
+        val sel = a.spinner.selectedItemPosition
+        val st = a.state.text
+        val bar = a.bar.progress
+        list.layoutTransition = null
+        list.removeViewAt(idx)
+        buildCard(a)
+        a.check.isChecked = tick
+        a.spinner.setSelection(sel)
+        a.state.text = st
+        paintState(a)
+        a.bar.progress = bar
+        list.addView(a.box, idx, cardParams())
+        refreshButtons(a)
+        list.layoutTransition = cardMotion()
+    }
+
+    /** "1:30 - 2:45" or "1:30 - end" */
+    private fun cutText(a: Item): String {
+        val (f, t) = cutOf(a) ?: return ""
+        return Opts.clock(f) + " - " + if (t < 0) "end" else Opts.clock(t)
+    }
+
+    /** The part to download as (from, to) in seconds, to = -1 for the end; null = the whole video. */
+    private fun cutOf(a: Item): Pair<Long, Long>? {
+        val p = a.cut.split(':').mapNotNull { it.toLongOrNull() }
+        return if (p.size == 2) p[0] to p[1] else null
+    }
+
+    /** The video's length in seconds, from the "12:34" in its meta line (0 = unknown). */
+    private fun lengthOf(a: Item): Long =
+        a.meta.split(" · ").firstOrNull { Regex("\\d+:\\d{2}(:\\d{2})?").matches(it) }?.let { Opts.parseTime(it) } ?: 0L
+
+    /** The ⋯ button (or a long press) on a card: options for this one video. */
+    private fun itemMenu(a: Item) {
+        val acts = mutableListOf<Pair<String, () -> Unit>>()
+        val editable = !a.done && !a.busy && a.url.startsWith("http")
+        if (editable) {
+            acts.add((if (a.cut.isEmpty()) "Download only a part..." else "Change the part (" + cutText(a) + ")...") to { askCut(a) })
+            if (a.cut.isNotEmpty()) acts.add("Download the whole video" to {
+                a.cut = ""; a.exact = false; rebuildCard(a); persist(); tell("The whole video will be downloaded.")
+            })
+            acts.add((if (a.split) "Keep as one file (don't split)" else "Split into chapters (one file each)") to {
+                a.split = !a.split
+                rebuildCard(a)
+                persist()
+                tell(if (a.split) "Each chapter will be saved as its own file. A video without chapters stays one file."
+                    else "The video will be saved as one file.")
+            })
+        } else if (a.busy) acts.add("(Pause it to change what is downloaded)" to {})
+        acts.add("View download log" to {
+            val logText = synchronized(a.log) { a.log.joinToString("\n") }
+            if (logText.isEmpty()) tell("No log yet: it fills while the video downloads.")
+            else showDetails("Log: " + a.title.take(40), logText.takeLast(5800))
+        })
+        if (a.url.startsWith("http")) {
+            acts.add("Copy link" to {
+                getSystemService(ClipboardManager::class.java)
+                    .setPrimaryClip(android.content.ClipData.newPlainText("Link", a.url))
+                tell("Link copied.")
+            })
+            acts.add("Open the video's page" to {
+                try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(a.url))) }
+                catch (_: Exception) { tell("No app found to open this link") }
+            })
+        }
+        AlertDialog.Builder(this, dialogTheme()).setTitle(a.title.take(80))
+            .setItems(acts.map { it.first }.toTypedArray()) { _, k -> acts[k].second() }
+            .setNegativeButton("Close", null)
+            .show()
+    }
+
+    /** Download only part of a video: from and to, as typed times. */
+    private fun askCut(a: Item) {
+        val len = lengthOf(a)
+        val cur = cutOf(a)
+        fun field(h: String, v: String) = EditText(this).apply {
+            hint = h
+            setText(v)
+            inputType = InputType.TYPE_CLASS_DATETIME or InputType.TYPE_DATETIME_VARIATION_TIME
+            setSingleLine()
+        }
+        val from = field("From, e.g. 1:30", cur?.let { Opts.clock(it.first) } ?: "")
+        val to = field(if (len > 0) "To (empty = the end, " + Opts.clock(len) + ")" else "To (empty = the end)",
+            cur?.second?.takeIf { it >= 0 }?.let { Opts.clock(it) } ?: "")
+        val exact = checkBox().apply {
+            text = "  Cut exactly where asked (slower: re-encodes the ends)"
+            textSize = T_LABEL
+            setTextColor(pal.text)
+            isChecked = a.exact
+        }
+        val box = LinearLayout(this)
+        box.orientation = LinearLayout.VERTICAL
+        box.setPadding(px(S5 + S1), px(S2), px(S5 + S1), 0)
+        box.addView(label("Times like 1:30 or 1:02:03 (hours:minutes:seconds), or seconds. Without \"exactly\", " +
+            "the part starts at the nearest keyframe, often a second or two earlier.", T_LABEL, pal.muted).apply {
+            setLineSpacing(px(2).toFloat(), 1f) })
+        box.addView(from, lp(MATCH, WRAP).apply { topMargin = px(S3) })
+        box.addView(to, lp(MATCH, WRAP).apply { topMargin = px(S2) })
+        box.addView(exact, lp(MATCH, WRAP).apply { topMargin = px(S3) })
+        val dlg = AlertDialog.Builder(this, dialogTheme()).setTitle("Download only a part").setView(box)
+            .setPositiveButton("Save", null)
+            .setNegativeButton("Cancel", null)
+            .show()
+        dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            val f = if (from.text.isBlank()) 0L else Opts.parseTime(from.text.toString())
+            val t = if (to.text.isBlank()) -1L else Opts.parseTime(to.text.toString())
+            if (f == null) { from.error = "Write a time like 1:30"; return@setOnClickListener }
+            if (t == null) { to.error = "Write a time like 2:45, or leave it empty"; return@setOnClickListener }
+            if (t in 0..f) { to.error = "Must be after the start"; return@setOnClickListener }
+            if (len > 0 && f >= len) { from.error = "The video is only " + Opts.clock(len) + " long"; return@setOnClickListener }
+            setCut(a, f, if (len > 0 && t >= len) -1 else t, exact.isChecked)
+            dlg.dismiss()
+            tell(if (a.cut.isEmpty()) "The whole video will be downloaded." else "Only " + cutText(a) + " will be downloaded.")
+        }
+    }
+
+    /** Sets the part of a video to download (from 0 to the end = the whole video). */
+    private fun setCut(a: Item, from: Long, to: Long, exact: Boolean) {
+        if (from <= 0 && to < 0) { a.cut = ""; a.exact = false } else { a.cut = "$from:$to"; a.exact = exact }
+        rebuildCard(a)
+        persist()
     }
 
     /** Card background; the outline turns accent when the card is ticked. */
@@ -1987,6 +2261,12 @@ class MainActivity : Activity() {
             rows.addView(r, lp(MATCH, WRAP))
         }
 
+        val history = History.all(this).size
+        entry(G_HISTORY, "Download history", if (prefs.getBoolean("incognito", false))
+            "Incognito is on: new downloads are not added" else "Open, share or download again what you saved",
+            history, true) { showHistory() }
+        entry(G_FILE, "Import links from a file", "A text file with links, one per line (or anywhere in the text)",
+            null, true) { pickLinksFile() }
         entry(G_DONE_ALL, "Remove completed", "Clears finished items. Files are kept.",
             completed, completed > 0) { removeCompleted() }
         entry(G_CLOSE, "Remove ticked unfinished", "Stops them and discards their partial files",
@@ -2007,6 +2287,8 @@ class MainActivity : Activity() {
             else "Signed in: " + signed.joinToString(", "), null, true) { chooseSite() }
         entry(G_CLOSE, "Sign out of all sites", "Forgets every login VidGrab saved",
             signed.size, signed.isNotEmpty()) { signOut() }
+        entry(G_TRASH, "Clear temporary files", "Cached thumbnails, temporary files and leftover downloads",
+            null, true) { clearTemp() }
         entry(G_CLEAR_ALL, "Remove all", "Empties the list. Saved files are kept.",
             items.size, items.isNotEmpty()) { removeAll() }
 
@@ -2035,7 +2317,8 @@ class MainActivity : Activity() {
     /** Height in pixels, 0 = best available, -1 = audio only (the same codes as Item.choices). */
     private fun defaultQuality() = prefs.getInt("quality", 0)
 
-    private fun qualityName(q: Int) = QUALITIES.firstOrNull { it.first == q }?.second ?: "Best available"
+    internal fun qualityName(q: Int) = if (q == -1) Opts.audioLabel(prefs)
+        else QUALITIES.firstOrNull { it.first == q }?.second ?: "Best available"
 
     private fun setDefaultQuality(q: Int) {
         prefs.edit().putInt("quality", q).apply()
@@ -2061,14 +2344,14 @@ class MainActivity : Activity() {
         var pick = cur
         val ticked = items.filter { it.check.isChecked && !it.done && !it.busy }
         val b = AlertDialog.Builder(this, dialogTheme()).setTitle("Quality for new links")
-            .setSingleChoiceItems(QUALITIES.map { it.second }.toTypedArray(), cur) { _, k -> pick = k }
+            .setSingleChoiceItems(QUALITIES.map { qualityName(it.first) }.toTypedArray(), cur) { _, k -> pick = k }
             .setPositiveButton("Save") { _, _ -> setDefaultQuality(QUALITIES[pick].first) }
             .setNegativeButton("Cancel", null)
         if (ticked.isNotEmpty()) b.setNeutralButton("Also set ${ticked.size} ticked") { _, _ ->
             setDefaultQuality(QUALITIES[pick].first)
             for (a in ticked) preselect(a)
             persist()
-            tell("Set ${ticked.size} ticked video(s) to ${QUALITIES[pick].second} (or the nearest one they have).")
+            tell("Set ${ticked.size} ticked video(s) to ${qualityName(QUALITIES[pick].first)} (or the nearest one they have).")
         }
         b.show()
     }
@@ -2126,6 +2409,7 @@ class MainActivity : Activity() {
             put("labels", JSONArray(a.labels)); put("choices", JSONArray(a.choices))
             put("sel", a.spinner.selectedItemPosition); put("done", a.done); put("pct", a.pct)
             put("files", JSONArray(a.files)); put("batch", a.batch); put("part", a.part)
+            put("cut", a.cut); put("exact", a.exact); put("split", a.split)
         })
         val bs = JSONArray()
         for (b in batches.values) bs.put(JSONObject().apply { put("id", b.id); put("urls", JSONArray(b.urls.toList())) })
@@ -2142,9 +2426,19 @@ class MainActivity : Activity() {
             }
         } catch (_: Exception) {}
         try {
-            val arr = JSONArray(prefs.getString("items", null) ?: return)
+            loadItems(JSONArray(prefs.getString("items", null) ?: "[]"), false)
+        } catch (_: Exception) {}
+        // batches whose videos all finished before VidGrab was closed are merged now
+        for (id in batches.keys.toList()) handler.post { checkBatch(id) }
+    }
+
+    /** Adds saved items (from the last session, or a backup) to the list; returns how many were added. */
+    private fun loadItems(arr: JSONArray, skipKnown: Boolean): Int {
+        var added = 0
+        try {
             for (i in 0 until arr.length()) {
                 val o = arr.getJSONObject(i)
+                if (skipKnown && items.any { it.url == o.optString("url") }) continue
                 val lj = o.getJSONArray("labels")
                 val cj = o.getJSONArray("choices")
                 val a = Item(o.getString("url"), o.getString("title"),
@@ -2155,6 +2449,9 @@ class MainActivity : Activity() {
                 o.optJSONArray("files")?.let { f -> for (k in 0 until f.length()) a.files.add(f.getString(k)) }
                 a.batch = o.optString("batch", "").takeIf { batches.containsKey(it) } ?: ""
                 a.part = o.optString("part", "")
+                a.cut = o.optString("cut", "")
+                a.exact = o.optBoolean("exact")
+                a.split = o.optBoolean("split")
                 // A download waiting to be merged whose file is gone (or whose batch is): download it again.
                 if (a.part.isNotEmpty() && (a.batch.isEmpty() || !File(a.part).exists())) {
                     a.part = ""
@@ -2167,13 +2464,13 @@ class MainActivity : Activity() {
                     a.bar.progress = a.pct
                     setState(a, pausedText(a))
                 }
+                added++
             }
         } catch (_: Exception) {}
-        // batches whose videos all finished before VidGrab was closed are merged now
-        for (id in batches.keys.toList()) handler.post { checkBatch(id) }
+        return added
     }
 
-    private fun confirm(msg: String, ok: () -> Unit) {
+    internal fun confirm(msg: String, ok: () -> Unit) {
         if (autoConfirm) { ok(); return }
         AlertDialog.Builder(this, dialogTheme()).setMessage(msg)
             .setPositiveButton("Yes") { _, _ -> ok() }
@@ -2183,7 +2480,8 @@ class MainActivity : Activity() {
     private fun choiceOf(a: Item) = a.choices[a.spinner.selectedItemPosition]
 
     // Same link + same resolution always maps to the same folder, so a retry continues the partial file.
-    private fun dirFor(a: Item, choice: Int) = File(filesDir, "dl/" + Integer.toHexString((a.url + choice).hashCode()))
+    private fun dirFor(a: Item, choice: Int) = File(filesDir, "dl/" + Integer.toHexString(
+        (a.url + choice + a.cut + (if (a.exact) "x" else "") + (if (a.split) "s" else "")).hashCode()))
 
     private fun removeCompleted() {
         val gone = items.filter { it.done && it.part.isEmpty() }     // not the ones waiting to be merged
@@ -2222,7 +2520,7 @@ class MainActivity : Activity() {
      * Shows a result both in the status bubble and as a toast: the bubble sits at the top of the page,
      * out of sight when the list is scrolled, which made these actions look like they did nothing.
      */
-    private fun tell(msg: String) {
+    internal fun tell(msg: String) {
         status.text = msg
         Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
     }
@@ -2273,7 +2571,7 @@ class MainActivity : Activity() {
     }
 
     /** Deletes one saved file. A file that is already gone counts as deleted. */
-    private fun deleteSaved(f: String): Boolean = try {
+    internal fun deleteSaved(f: String): Boolean = try {
         val u = Uri.parse(f)
         if (u.authority == MediaStore.AUTHORITY) contentResolver.delete(u, null, null)
         else DocumentsContract.deleteDocument(contentResolver, u)
@@ -2339,7 +2637,8 @@ class MainActivity : Activity() {
         try {
             val cmd = mutableListOf(ffmpegBin().absolutePath, "-nostdin", "-y", "-hide_banner", "-loglevel", "error",
                 "-fflags", "+genpts+discardcorrupt", "-i", f.absolutePath,
-                "-map", "0:v?", "-map", "0:a?", "-c", "copy", "-avoid_negative_ts", "make_zero")
+                "-map", "0:v?", "-map", "0:a?", "-map", "0:s?", "-map", "0:t?",
+                "-c", "copy", "-avoid_negative_ts", "make_zero")
             if (ext != "mkv" && ext != "webm") { cmd.add("-movflags"); cmd.add("+faststart") }
             cmd.add(out.absolutePath)
             val pb = ProcessBuilder(cmd)
@@ -2402,6 +2701,114 @@ class MainActivity : Activity() {
                 }, if (ok) C_OK else C_DANGER)
             }
             onUi { h -> h.tell("Optimized $fixed of ${sel.size} item(s).") }
+        }
+    }
+
+    // ---------- links from a file, temporary files, backups ----------
+    private fun pickLinksFile() {
+        startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
+            putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("text/*", "application/octet-stream", "application/json"))
+        }, 5)
+    }
+
+    /** Puts every link found in a text file into the box, where they are checked like pasted links. */
+    private fun importLinks(u: Uri) {
+        analyzer.execute {
+            val text = try {
+                contentResolver.openInputStream(u)!!.use { i ->
+                    val buf = ByteArray(4 shl 20)
+                    var n = 0
+                    while (n < buf.size) { val k = i.read(buf, n, buf.size - n); if (k < 0) break; n += k }
+                    String(buf, 0, n, Charsets.UTF_8)
+                }
+            } catch (e: Exception) {
+                onUi { h -> h.tell("Could not read the file: " + (e.message ?: e.javaClass.simpleName)) }
+                return@execute
+            }
+            val urls = Regex("https?://[^\\s\"'<>]+").findAll(text).map { it.value.trimEnd('.', ',', ')', ';') }
+                .distinct().toList()
+            onUi { h ->
+                if (urls.isEmpty()) { h.tell("No links found in that file."); return@onUi }
+                val have = Regex("https?://\\S+").findAll(h.input.text).map { it.value }.toSet()
+                val fresh = urls.filter { it !in have && items.none { a -> a.url == it } }
+                if (fresh.isEmpty()) { h.tell("All ${urls.size} link(s) in that file are already in VidGrab."); return@onUi }
+                h.input.append(fresh.joinToString("\n") + "\n")
+                h.tell("Added ${fresh.size} link(s) from the file. They are being checked.")
+            }
+        }
+    }
+
+    private fun dirSize(f: File): Long = if (f.isFile) f.length() else f.listFiles().orEmpty().sumOf { dirSize(it) }
+
+    /**
+     * Frees space: cached thumbnails, temporary files and leftover downloads nothing uses. Partial downloads
+     * of videos still in the list are kept, so they can continue. (yt-dlp keeps no cache of its own here:
+     * the library runs it with --no-cache-dir.)
+     */
+    private fun clearTemp() {
+        val quiet = items.none { it.busy } && checking.isEmpty() && merging.get() == 0
+        val keep = items.flatMap { a -> a.choices.map { dirFor(a, it).name } }.toSet()
+        val keepBatches = batches.keys.toSet()
+        status.text = "Clearing temporary files..."
+        analyzer.execute {
+            var freed = 0L
+            fun drop(f: File) { if (f.exists()) { freed += dirSize(f); f.deleteRecursively() } }
+            drop(File(cacheDir, "thumbs"))
+            drop(File(cacheDir, "opt"))                   // optimizing runs on this same thread: none is running
+            if (quiet) drop(File(cacheDir, "cookies"))    // per-run copies of the logins
+            File(filesDir, "dl").listFiles()?.forEach { if (it.name !in keep && it.name !in running) drop(it) }
+            File(filesDir, "merge").listFiles()?.forEach { if (it.name !in keepBatches) drop(it) }
+            val mb = freed / 1_000_000.0
+            onUi { h -> h.tell(if (mb >= 0.1) "Freed %.1f MB.".format(mb) else "Nothing to clear: there were no temporary files.") }
+        }
+    }
+
+    /** Settings > More options > Back up: writes settings, list and history to a file the user picks. */
+    internal fun pickBackupTarget() {
+        val day = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())
+        startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "application/json"
+            putExtra(Intent.EXTRA_TITLE, "VidGrab backup $day.json")
+        }, 6)
+    }
+
+    internal fun pickBackupSource() {
+        startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
+            putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("application/json", "text/*", "application/octet-stream"))
+        }, 7)
+    }
+
+    private fun writeBackup(u: Uri) {
+        persist()
+        try {
+            contentResolver.openOutputStream(u, "wt")!!.use { it.write(Backup.export(this).toByteArray()) }
+            tell("Backup saved: settings, ${items.size} video(s) in the list and ${History.all(this).size} history entries. " +
+                "Logins are not included.")
+        } catch (e: Exception) {
+            tell("Could not write the backup: " + (e.message ?: e.javaClass.simpleName))
+        }
+    }
+
+    private fun readBackup(u: Uri) {
+        confirm("Restore this backup? Its settings replace the current ones; its videos and history are added to " +
+            "what is here.") {
+            try {
+                val text = contentResolver.openInputStream(u)!!.use { it.readBytes().toString(Charsets.UTF_8) }
+                val r = Backup.import(this, text)
+                setParallel(parallel())
+                applyTheme()                              // labels and theme from the restored settings
+                val n = loadItems(r.items, true)
+                persist()
+                updateCounts()
+                tell("Restored ${r.settings} setting(s), $n video(s) and ${r.history} history entries.")
+            } catch (e: Exception) {
+                tell("Could not restore: " + (e.message ?: e.javaClass.simpleName))
+            }
         }
     }
 
@@ -2625,7 +3032,8 @@ class MainActivity : Activity() {
 
     private fun pausedText(a: Item) = at(a) + "Paused - tap Start to continue"
 
-    private fun buildRequest(url: String, choice: Int, dir: File, cookies: File?): YoutubeDLRequest {
+    private fun buildRequest(a: Item, choice: Int, dir: File, cookies: File?): YoutubeDLRequest {
+        val url = a.url
         val r = YoutubeDLRequest(url)
         r.addOption("--no-playlist")
         if (cookies != null) r.addOption("--cookies", cookies.absolutePath)   // signed-in sites (More > Sign in)
@@ -2646,26 +3054,32 @@ class MainActivity : Activity() {
         r.addOption("--progress-template", "download:" + PROG +
             "%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.total_bytes_estimate)s|" +
             "%(progress.speed)s|%(progress.eta)s|%(progress.fragment_index)s|%(progress.fragment_count)s")
-        r.addOption("-o", dir.absolutePath + "/%(title).80s.%(ext)s")
-        when (choice) {
-            -1 -> { r.addOption("-x"); r.addOption("--audio-format", "mp3") }
-            0 -> {
-                r.addOption("-f", "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b")
-                r.addOption("--merge-output-format", "mp4")
-            }
-            else -> {
-                r.addOption("-f", "bv*[height<=$choice][ext=mp4]+ba[ext=m4a]/bv*[height<=$choice]+ba/b[height<=$choice]")
-                r.addOption("--merge-output-format", "mp4")
-            }
+        // Settings > More options > File names (always one file name inside the item's own folder)
+        r.addOption("-o", dir.absolutePath + "/" + Opts.nameTemplate(prefs) + ".%(ext)s")
+        if (a.split) {
+            r.addOption("--split-chapters")
+            r.addOption("-o", "chapter:" + dir.absolutePath + "/chapters/%(title).60s - %(section_number)02d %(section_title).60s.%(ext)s")
         }
+        cutOf(a)?.let { (f, t) -> Opts.section(r, f, t, a.exact) }
+        // format, audio format, subtitles, metadata, SponsorBlock, speed limit, extra options
+        Opts.download(r, prefs, choice)
         return r
+    }
+
+    /** Keeps the last lines yt-dlp printed for this item (the ⋯ button > View download log). */
+    private fun logLine(a: Item, line: String) = synchronized(a.log) {
+        a.log.addLast(line)
+        while (a.log.size > 400) a.log.removeFirst()
     }
 
     /** Handles one line of yt-dlp output; returns true when more bytes have arrived. */
     private fun onLine(a: Item, line: String): Boolean {
         if (a.paused || a.cancelled) { kill(a); return false }
+        if (!line.contains(PROG)) logLine(a, line)
         if (line.startsWith("[Merger]") || line.startsWith("[ExtractAudio]") ||
-            line.startsWith("[VideoConvertor]") || line.startsWith("[Fixup")) {
+            line.startsWith("[VideoConvertor]") || line.startsWith("[Fixup") || line.startsWith("[EmbedSubtitle]") ||
+            line.startsWith("[EmbedThumbnail]") || line.startsWith("[Metadata]") || line.startsWith("[ModifyChapters]") ||
+            line.startsWith("[SplitChapters]") || line.startsWith("[SponsorBlock]")) {
             a.post = true
             ui(a, "Merging / converting...", C_PRIMARY)
             return false
@@ -2752,58 +3166,42 @@ class MainActivity : Activity() {
                     a.proc = true
                     val jar = Cookies.forRun(this)
                     try {
-                        YoutubeDL.getInstance().execute(buildRequest(a.url, choice, dir, jar), a.pid) { _, _, line ->
+                        val req = buildRequest(a, choice, dir, jar)
+                        logLine(a, "---- " + java.text.DateFormat.getDateTimeInstance().format(java.util.Date()) + " ----")
+                        logLine(a, "yt-dlp " + req.buildCommand().joinToString(" "))
+                        val res = YoutubeDL.getInstance().execute(req, a.pid) { _, _, line ->
                             if (onLine(a, line)) tries = 0
                         }
+                        res.err.lines().filter { it.isNotBlank() }.forEach { logLine(a, it) }
                     } finally {
                         a.proc = false
                         jar?.delete()
                     }
                     // A killed process can still end "normally"; never treat its leftovers as a finished file.
                     if (a.netKill || a.paused || a.cancelled) throw Exception("interrupted")
-                    val files = dir.listFiles().orEmpty()
-                        .filter { !it.name.endsWith(".part") && !it.name.endsWith(".ytdl") && !it.name.endsWith(".temp") }
+                    val files = finishedFiles(a, dir)
                     if (files.isEmpty()) throw Exception("incomplete download")
-                    // Optimizing is a bonus: if it fails the download is still saved, and the card says why.
-                    var optErr = ""
-                    if (prefs.getBoolean("optimize", true)) {
-                        ui(a, "Optimizing video...", C_PRIMARY)
-                        optErr = files.mapNotNull { optimize(it) }.filter { !it.startsWith(NOT_VIDEO) }
-                            .joinToString("\n\n")
-                    }
-                    val b = batches[a.batch]
-                    if (b != null && !b.merging && a.url in b.urls) {
-                        // To be merged: the video waits in app storage (it is never saved on its own).
-                        val pd = File(filesDir, "merge/${b.id}").apply { mkdirs() }
-                        val main = files.maxByOrNull { it.length() }!!
-                        val dest = File(pd, Integer.toHexString(a.url.hashCode()) + "." + main.extension)
-                        if (!main.renameTo(dest)) { main.copyTo(dest, true); main.delete() }
-                        a.files.addAll(files.filter { it != main }.map { save(it) })   // e.g. a subtitle file
-                        a.part = dest.absolutePath
-                    } else {
-                        a.batch = ""
-                        a.files.addAll(files.map { save(it) })
-                    }
-                    dir.deleteRecursively()
-                    a.pct = 100
-                    a.done = true
-                    a.err = if (optErr.isEmpty()) "" else "Saved, but optimizing failed:\n\n$optErr"
-                    onUi { h ->
-                        a.bar.progress = 100
-                        when {
-                            a.part.isNotEmpty() -> h.setState(a, WAIT_MERGE, C_OK)
-                            optErr.isEmpty() -> h.setState(a, "Done - saved", C_OK)
-                            else -> h.setState(a, "Done - saved (not optimized - tap here for details)", C_WARN)
-                        }
-                        h.persist()
-                        h.updateCounts()
-                        if (a.part.isNotEmpty()) h.checkBatch(a.batch)
-                    }
+                    complete(a, dir, files, "")
                     return
                 } catch (e: Exception) {
                     if (a.cancelled) return
                     if (a.paused) { ui(a, pausedText(a)); return }
                     if (a.netKill) continue     // stopped because the network changed: resume right away
+                    logLine(a, rawError(e))
+                    // The video is there, but a finishing step (cover art, subtitles, metadata, chapters,
+                    // SponsorBlock) failed: save it anyway and say what went wrong.
+                    if (finishingStepFailed(e)) {
+                        val files = finishedFiles(a, dir)
+                        if (files.isNotEmpty() && files.none { Regex("\\.f[0-9a-zA-Z_-]+\\.\\w+$").containsMatchIn(it.name) }) {
+                            try {
+                                complete(a, dir, files, rawError(e))
+                            } catch (e2: Exception) {
+                                a.err = rawError(e2)
+                                ui(a, at(a) + why(e2).first + ". Tap Start to retry or tap here for details.", C_DANGER)
+                            }
+                            return
+                        }
+                    }
                     val (msg, net) = why(e)
                     if (net && tries < 30) {
                         tries++
@@ -2832,6 +3230,82 @@ class MainActivity : Activity() {
                 h.updateCounts()
             }
         }
+    }
+
+    /** yt-dlp's "ERROR: Postprocessing: ..." for a step that only adds to a finished video. */
+    private fun finishingStepFailed(e: Exception): Boolean {
+        val t = rawError(e).lowercase()
+        if ("postprocessing" !in t) return false
+        return listOf("thumbnail", "subtitle", "metadata", "chapter", "sponsorblock", "sponsor").any { it in t }
+    }
+
+    /**
+     * The finished files of a download: no partial files, folders or left-over thumbnails; with
+     * "Split into chapters", the chapter files (or the whole video when it has no chapters).
+     */
+    private fun finishedFiles(a: Item, dir: File): List<File> {
+        fun done(d: File) = d.listFiles().orEmpty().filter { f ->
+            f.isFile && !f.name.endsWith(".part") && !f.name.endsWith(".ytdl") && !f.name.endsWith(".temp") &&
+                !f.name.contains(".part-Frag")
+        }
+        if (a.split) {
+            val ch = done(File(dir, "chapters"))
+            if (ch.isNotEmpty()) return ch + done(dir).filter { it.extension.lowercase() in listOf("srt", "vtt", "ass", "lrc") }
+        }
+        val all = done(dir)
+        val media = all.filter { it.extension.lowercase() !in listOf("jpg", "jpeg", "png", "webp") }
+        return media.ifEmpty { all }
+    }
+
+    /** Optimizes, saves (or keeps for a merge) and records a finished download. warn = a finishing step failed. */
+    private fun complete(a: Item, dir: File, files: List<File>, warn: String) {
+        // Optimizing is a bonus: if it fails the download is still saved, and the card says why.
+        var optErr = ""
+        if (prefs.getBoolean("optimize", true)) {
+            ui(a, "Optimizing video...", C_PRIMARY)
+            optErr = files.mapNotNull { optimize(it) }.filter { !it.startsWith(NOT_VIDEO) }
+                .joinToString("\n\n")
+        }
+        val b = batches[a.batch]
+        if (b != null && !b.merging && a.url in b.urls && !a.split) {
+            // To be merged: the video waits in app storage (it is never saved on its own).
+            val pd = File(filesDir, "merge/${b.id}").apply { mkdirs() }
+            val main = files.maxByOrNull { it.length() }!!
+            val dest = File(pd, Integer.toHexString(a.url.hashCode()) + "." + main.extension)
+            if (!main.renameTo(dest)) { main.copyTo(dest, true); main.delete() }
+            a.files.addAll(files.filter { it != main }.map { save(it) })   // e.g. a subtitle file
+            a.part = dest.absolutePath
+        } else {
+            a.batch = ""
+            val saved = files.map { save(it) }
+            a.files.addAll(saved)
+            record(a, saved)
+        }
+        dir.deleteRecursively()
+        a.pct = 100
+        a.done = true
+        a.err = listOf(if (warn.isEmpty()) "" else "Saved, but a finishing step failed:\n\n$warn",
+            if (optErr.isEmpty()) "" else "Saved, but optimizing failed:\n\n$optErr")
+            .filter { it.isNotEmpty() }.joinToString("\n\n")
+        onUi { h ->
+            a.bar.progress = 100
+            when {
+                a.part.isNotEmpty() -> h.setState(a, WAIT_MERGE, C_OK)
+                warn.isNotEmpty() -> h.setState(a, "Done - saved (a finishing step failed - tap here for details)", C_WARN)
+                optErr.isEmpty() -> h.setState(a, if (a.files.size > 1 && a.split)
+                    "Done - saved as ${a.files.size} files" else "Done - saved", C_OK)
+                else -> h.setState(a, "Done - saved (not optimized - tap here for details)", C_WARN)
+            }
+            h.persist()
+            h.updateCounts()
+            if (a.part.isNotEmpty()) h.checkBatch(a.batch)
+        }
+    }
+
+    /** Adds a saved download to the history (More > Download history), unless Incognito is on. */
+    private fun record(a: Item, uris: List<String>) {
+        if (uris.isEmpty()) return
+        History.add(applicationContext, History.Entry(a.url, a.title, a.meta, a.thumb, uris, System.currentTimeMillis()))
     }
 
     /** Copies a finished file to the chosen folder; returns its uri so it can be deleted later. */
@@ -2952,6 +3426,7 @@ class MainActivity : Activity() {
             m.done = true
             m.pct = 100
             m.files.add(uri)
+            record(m, listOf(uri))
             // the separate videos were never saved; their downloads went with the merge folder
             dropFromList(members)
             addRow(m)
@@ -2960,6 +3435,7 @@ class MainActivity : Activity() {
             tell("Merged ${members.size} videos into \"$name\". The separate videos were deleted.")
         } else {
             for (a in members) {
+                record(a, a.files.toList())
                 a.err = if (err.isEmpty()) "" else "Could not merge, so each video was saved on its own:\n\n$err"
                 if (members.size > 1) setState(a, "Saved on its own - could not merge (tap here for details)", C_WARN)
                 else setState(a, "Done - saved", C_OK)
@@ -2981,6 +3457,7 @@ class MainActivity : Activity() {
     /** Proxy, and for direct streams the page they were found on and the browser's user agent. */
     private fun netOptions(r: YoutubeDLRequest, url: String) {
         proxy()?.let { r.addOption("--proxy", it) }
+        Opts.network(r, prefs)
         referers[url]?.let { page ->
             r.addOption("--referer", page)
             if (browserUa.isNotEmpty()) r.addOption("--user-agent", browserUa)
@@ -3048,6 +3525,15 @@ class MainActivity : Activity() {
     internal fun testSetDefaultQuality(q: Int) = setDefaultQuality(q)  // "Quality for new links"
     internal fun testQuality(a: Item) = a.labels[a.spinner.selectedItemPosition]
     internal fun testRunningNow() = items.count { it.proc }             // yt-dlp processes running
+    internal fun testSetCut(a: Item, from: Long, to: Long) = setCut(a, from, to, false)   // ⋯ > Download only a part
+    internal fun testSetOption(key: String, v: Any) {                  // More options (prefs keys of Opts)
+        when (v) {
+            is Boolean -> prefs.edit().putBoolean(key, v).apply()
+            is String -> prefs.edit().putString(key, v).apply()
+            is Int -> prefs.edit().putInt(key, v).apply()
+        }
+    }
+    internal fun testHistory(): List<History.Entry> = History.all(this)
 
     // ---------- engine update ----------
     private fun update() {
@@ -3057,7 +3543,7 @@ class MainActivity : Activity() {
         status.text = "Updating engine..."
         Thread {
             try {
-                val r = YoutubeDL.getInstance().updateYoutubeDL(application, YoutubeDL.UpdateChannel.NIGHTLY)
+                val r = YoutubeDL.getInstance().updateYoutubeDL(application, Opts.channel(prefs))
                 val v = YoutubeDL.getInstance().versionName(application)
                 prefs.edit().putLong("engineChecked", System.currentTimeMillis()).apply()
                 onUi { h ->

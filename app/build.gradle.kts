@@ -54,6 +54,9 @@ dependencies {
     // The browser's proxy (Settings > Proxy / VPN): ProxyController
     implementation("androidx.webkit:webkit:1.8.0")
 
+    // Unit tests of the pure logic (app/src/test, run by CI's build job): `gradle testDebugUnitTest`
+    testImplementation("junit:junit:4.13.2")
+
     // End-to-end tests on an emulator (app/src/androidTest, run by CI)
     androidTestImplementation("androidx.test:runner:1.5.2")
     androidTestImplementation("androidx.test:core:1.5.0")

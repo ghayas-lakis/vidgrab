@@ -5,7 +5,6 @@ import android.app.AlertDialog
 import android.app.Dialog
 import android.content.Intent
 import android.content.res.ColorStateList
-import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
@@ -216,8 +215,7 @@ class BrowserActivity : Activity() {
     }
 
     override fun onCreate(s: Bundle?) {
-        val night = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
-        pal = if (night) DARK else LIGHT
+        pal = if (Opts.dark(this)) DARK else LIGHT     // Settings > More options > Theme
         setTheme(if (pal.dark) android.R.style.Theme_DeviceDefault_NoActionBar else android.R.style.Theme_DeviceDefault_Light_NoActionBar)
         super.onCreate(s)
         dp = resources.displayMetrics.density

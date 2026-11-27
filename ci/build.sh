@@ -11,7 +11,7 @@ if [ -n "${VIDGRAB_KEYSTORE_B64:-}" ]; then
 else
   echo "::warning title=Temporary signing key::The VIDGRAB_KEYSTORE secret is not set, so this build uses a temporary debug key and will not install over a previous build. See README > Installing."
 fi
-gradle assembleDebug --no-daemon 2>&1 | tee build.log
+gradle assembleDebug testDebugUnitTest --no-daemon 2>&1 | tee build.log
 code=${PIPESTATUS[0]}
 [ -n "${VIDGRAB_KEYSTORE_FILE:-}" ] && rm -f "$VIDGRAB_KEYSTORE_FILE"
 if [ "$code" != 0 ]; then python3 ci/annotate.py build build.log; fi

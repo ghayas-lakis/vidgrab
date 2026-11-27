@@ -163,6 +163,31 @@ class EndToEndTest : E2EBase() {
         }
     }
 
+    /**
+     * The card's "Download only a part" (1 to 3 s of the 5 s video), the download history, and the same
+     * link added again saying it was downloaded before.
+     */
+    @Test
+    fun h_partOfAVideoAndHistory() {
+        val card = addLink(TEST_VIDEO)
+        act { a -> a.testSetCut(card, 1, 3) }
+        download(card)
+        assertTrue(report(), act { it.testState(card) }.startsWith("Done - saved"))
+        val uri = card.files.single()
+        val ms = durationMs(uri)
+        assertTrue("Only part of the 5 s video should be saved, got $ms ms", ms in 1000..4200)
+        val h = act { it.testHistory() }
+        assertTrue("The download should be in the history: ${h.map { it.url }}",
+            h.any { it.url == TEST_VIDEO && uri in it.files })
+
+        // deleting the video keeps its history entry, so the link added again is recognised
+        act { a -> card.check.isChecked = true; a.testDeleteTicked() }
+        waitFor("Delete ticked videos", 30) { a -> if (a.testItems().isEmpty()) OK else null }
+        val again = addLink(TEST_VIDEO)
+        val s2 = act { it.testState(again) }
+        assertTrue("A link downloaded before should say so: $s2", s2.startsWith("Downloaded before"))
+    }
+
     /** "Quality for new links" = Audio only: a new card starts on Audio only (MP3). */
     @Test
     fun g_defaultQuality() {
