@@ -1507,7 +1507,7 @@ class MainActivity : Activity() {
             has("no space left") -> "Phone storage is full" to false
             has("securityexception", "permission denied", "cannot create file") -> "Cannot write to the chosen folder - pick it again" to false
             has("timed out", "timeout") -> "Connection timed out" to true
-            has("name or service not known", "failed to resolve", "getaddrinfo", "name resolution", "nodename nor servname") ->
+            has("name or service not known", "failed to resolve", "getaddrinfo", "name resolution", "nodename nor servname", "no address associated with hostname", "temporary failure in name resolution") ->
                 "Cannot reach the server" to true
             has("connection reset", "connection refused", "connection aborted", "remote end closed", "incompleteread",
                 "network is unreachable", "unable to download", "urlopen error", "ssl", "eof occurred", "incomplete download") ->
